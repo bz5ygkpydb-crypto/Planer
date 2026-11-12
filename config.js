@@ -4,7 +4,7 @@ export const SUPABASE_URL = 'https://hzcoihkshmbfgcizrlug.supabase.co';
 export const SUPABASE_KEY = 'sb_publishable_x4sx6AlrL3nDhXQSnzFBhA_nAnkBMyq';
 
 // Öffentliche Adresse der App. Steht in der Einladungs-Mail.
-export const APP_URL = 'https://creative-cascaron-d43ee2.netlify.app/';
+export const APP_URL = 'https://bz5ygkpydb-crypto.github.io/Planer/';
 
 // Registrierung neuer Konten. Die Datenbank lässt nur E-Mail-Adressen zu, die der Inhaber
 // in den Einstellungen eingeladen hat (siehe supabase/schema.sql, Abschnitt "Einladungen").
