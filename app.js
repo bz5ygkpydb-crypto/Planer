@@ -111,6 +111,9 @@ const state = {
   hist: [],
   accTx: [],
   finView: 'uebersicht',
+  debts: [],
+  accDetail: null,
+  accSeg: 'alle',
   accFilter: 'alle',
   catFilter: 'alle',
   lastAcc: null,
@@ -331,6 +334,9 @@ async function loadHist() {
   const now = new Date();
   state.hist = await db.list('transactions', { col: 'date', from: iso(addMonths(monthStart(now), -5)), to: iso(monthEnd(now)) });
 }
+async function loadDebts() {
+  state.debts = await db.list('debts');
+}
 async function loadRecurring() {
   state.recurring = (await db.list('recurring')).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
 }
@@ -384,7 +390,7 @@ async function loadSettings() {
 
 async function refresh() {
   try {
-    await Promise.all([loadEvents(), loadAgenda(), loadCalendars(), loadTodos(), loadTx(), loadHist(), loadAccounts(), loadRecurring(), loadSettings(), loadInvites()]);
+    await Promise.all([loadEvents(), loadAgenda(), loadCalendars(), loadTodos(), loadTx(), loadHist(), loadAccounts(), loadRecurring(), loadDebts(), loadSettings(), loadInvites()]);
     if (await applyConfigRenames()) await Promise.all([loadTx(), loadHist(), loadRecurring()]);
     await loadAccountTx();
     state.error = null;
@@ -574,7 +580,7 @@ function viewToday() {
   const monthAll = [...state.hist.filter((x) => x.date >= mFrom && x.date <= mTo), ...recurringFor(cur)];
   const spent = sumOf(monthAll, 'ausgabe');
   const bals = balancesNow();
-  const avail = state.accounts.filter((a) => a.active && a.kind !== 'anlage').reduce((s, a) => s + bals.get(a.id).value, 0);
+  const bud = budgetNow();
   const soon = upcomingRecurring(7).slice(0, 3);
   const soonRows = soon
     .map((x) => {
@@ -608,11 +614,16 @@ function viewToday() {
       ${dueTodos.length > 5 ? `<p class="hint" style="margin:8px 0 0">+ ${dueTodos.length - 5} weitere unter „To-Dos“.</p>` : ''}
     </section>
     <section class="card"><h2>Geld</h2>
-      <div class="stats" style="margin:0 0 ${soonRows ? 12 : 0}px">
-        ${state.accounts.length ? `<div class="stat"><span>Verfügbar</span><b class="${avail < 0 ? 'c-red' : ''}">${eur.format(avail)}</b></div>` : ''}
-        <div class="stat" ${state.accounts.length ? '' : 'style="grid-column:1/-1"'}><span>Ausgaben im ${now.toLocaleDateString('de-DE', { month: 'long' })}</span><b>${eur.format(spent)}</b></div>
-      </div>
-      ${soonRows ? `<ul class="list">${soonRows}</ul>` : ''}
+      ${
+        state.accounts.some((a) => a.active)
+          ? `<button class="moneytop" data-a="gofin"><span>Frei verfügbar</span><b class="${bud.free < 0 ? 'c-red' : ''}">${eur.format(bud.free)}</b><small>Konten ${eur.format(bud.cash)}${bud.debt ? ` · Schulden −${eur.format(bud.debt)}` : ''}${bud.fixed > 0 ? ` · Fixkosten −${eur.format(bud.fixed)}` : ''}</small></button>
+             <div class="minicards">${state.accounts
+               .filter((a) => a.active)
+               .map((a) => `<button class="mini ${brandOf(a).cls}" data-a="gofin" data-id="${a.id}"><span>${esc(a.name)}</span><b>${eur.format(bals.get(a.id).value)}</b></button>`)
+               .join('')}</div>`
+          : `<div class="stats" style="margin:0"><div class="stat" style="grid-column:1/-1"><span>Ausgaben im ${now.toLocaleDateString('de-DE', { month: 'long' })}</span><b>${eur.format(spent)}</b></div></div>`
+      }
+      ${soonRows ? `<ul class="list" style="margin-top:10px">${soonRows}</ul>` : ''}
     </section>`;
 }
 
@@ -774,31 +785,166 @@ function finMonthNav() {
     </div>`;
 }
 
-// Kontostände: vom Nutzer selbst eingetragen, mit Datum "Stand". Ältere Stände werden hervorgehoben.
-function accountsCard() {
-  const t = today();
+// ---------- Konten als Karten, Budget, Schulden ----------
+const DEBT_KINDS = { klarna: 'Klarna / Später bezahlen', rate: 'Ratenzahlung', privat: 'Privat geliehen', sonstig: 'Sonstiges' };
+
+// Marken-Optik pro Konto, erkannt am Namen. Eigene Wortmarken in den Markenfarben, keine Original-Logos.
+function brandOf(a) {
+  const n = a.name || '';
+  if (/trade\s*republic/i.test(n)) return { cls: 'b-tr', logo: '<span class="logo"><i class="lg-sq">TR</i><span>Trade Republic</span></span>' };
+  if (/adv[a-z]*nzia/i.test(n)) return { cls: 'b-adv', logo: '<span class="logo"><b class="lg-adv">advanzia</b><em>GOLD</em></span>' };
+  if (/\bing\b/i.test(n)) return { cls: 'b-ing', logo: '<span class="logo"><i class="lg-pill">ING</i></span>' };
+  if (/haspa|hamburger sparkasse/i.test(n)) return { cls: 'b-haspa', logo: '<span class="logo"><i class="lg-pill">Haspa</i></span>' };
+  return { cls: 'b-def', logo: `<span class="logo"><i class="lg-sq">${esc((n.trim()[0] || '?').toUpperCase())}</i><span>${esc(n)}</span></span>` };
+}
+
+function accountCard(a, b) {
+  const br = brandOf(a);
+  const age = a.balance_date ? dayDiff(a.balance_date, today()) : null;
+  const stale = age === null || age > 7;
+  return `<button class="acard ${br.cls}" data-a="accopen" data-id="${a.id}" aria-label="${esc(a.name)} öffnen">
+    <span class="acard-top">${br.logo}<span class="acard-kind">${KINDS[a.kind] || ''}</span></span>
+    <span class="acard-bal">${eur.format(b.value)}</span>
+    <span class="acard-foot"><span>${esc(a.name)}</span>${stale ? '<span class="acard-warn">Stand prüfen</span>' : ''}</span></button>`;
+}
+
+function accountsRow() {
   const balances = balancesNow();
   const act = state.accounts.filter((a) => a.active);
   const idle = state.accounts.filter((a) => !a.active);
-  const row = (a) => {
-    const age = a.balance_date ? Math.round((parseISO(t) - parseISO(a.balance_date)) / 864e5) : null;
-    const stale = age === null || age > 7;
-    const stand = age === null ? 'noch kein Eintrag' : age === 0 ? 'Eintrag: heute' : `Eintrag: ${shortDate(a.balance_date)}`;
-    const b = balances.get(a.id);
-    const since = Math.abs(b.delta) >= 0.005 ? `seither ${b.delta > 0 ? '+' : '−'}${eur.format(Math.abs(b.delta))} · ` : '';
-    return `<li class="row"><button class="main" data-a="editacc" data-id="${a.id}"><span class="title">${esc(a.name)}</span>
-      <span class="sub">${KINDS[a.kind] || ''} · ${since}<span class="${stale ? 'tag-open' : ''}">${stand}</span></span></button>
-      <span class="amount ${b.value < 0 ? 'c-red' : ''}">${eur.format(b.value)}</span></li>`;
+  const cards = act.map((a) => accountCard(a, balances.get(a.id))).join('');
+  const idleRows = idle
+    .map((a) => `<li class="row"><button class="main" data-a="editacc" data-id="${a.id}"><span class="title">${esc(a.name)}</span><span class="sub">${KINDS[a.kind] || ''} · nicht genutzt</span></button><span class="amount">${eur.format(balances.get(a.id).value)}</span></li>`)
+    .join('');
+  return `<div class="acards">${cards}<button class="acard add" data-a="addacc"><span class="plus">+</span><span>Konto hinzufügen</span></button></div>
+    ${idle.length ? `<details class="idle"><summary>Nicht genutzte Konten (${idle.length})</summary><ul class="list">${idleRows}</ul></details>` : ''}`;
+}
+
+// Budget: Geld auf den Konten (ohne Anlagen), abzüglich offener Schulden und der Fixkosten, die bis Monatsende noch fällig sind.
+function budgetNow() {
+  const bals = balancesNow();
+  const act = state.accounts.filter((a) => a.active);
+  const cash = act.filter((a) => a.kind !== 'anlage').reduce((s, a) => s + bals.get(a.id).value, 0);
+  const invest = act.filter((a) => a.kind === 'anlage').reduce((s, a) => s + bals.get(a.id).value, 0);
+  const openDebts = state.debts.filter((d) => !d.paid);
+  const debt = openDebts.reduce((s, d) => s + Number(d.amount), 0);
+  const t = today();
+  const end = iso(monthEnd(new Date()));
+  const rest = upcomingRecurring(32).filter((x) => x.date > t && x.date <= end);
+  const fixed = sumOf(rest, 'ausgabe') - sumOf(rest, 'einnahme');
+  return { cash, invest, debt, debtCount: openDebts.length, fixed, free: cash - debt - fixed };
+}
+
+function budgetHero() {
+  const b = budgetNow();
+  if (!state.accounts.some((a) => a.active)) {
+    return `<section class="budget"><div class="hero-k">Frei verfügbar</div><div class="budget-n">–</div><div class="hero-s">Lege dein erstes Konto an, dann rechnet die App dein Budget aus.</div></section>`;
+  }
+  const line = (label, v, sign) => `<div><span>${label}</span><b>${sign}${eur.format(Math.abs(v))}</b></div>`;
+  return `<section class="budget"><div class="hero-k">Frei verfügbar</div>
+    <div class="budget-n">${eur.format(b.free)}</div>
+    <div class="budget-lines">
+      ${line('Auf den Konten', b.cash, b.cash < 0 ? '−' : '')}
+      ${line(`Offene Schulden${b.debtCount ? ` (${b.debtCount})` : ''}`, b.debt, '−')}
+      ${line('Fixkosten bis Monatsende', b.fixed, b.fixed > 0 ? '−' : '+')}
+    </div>${b.invest ? `<div class="budget-foot">Dazu Anlagen: ${eur.format(b.invest)}</div>` : ''}</section>`;
+}
+
+function debtsCard() {
+  const t = today();
+  const open = state.debts.filter((d) => !d.paid).sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.name.localeCompare(b.name));
+  const paid = state.debts.filter((d) => d.paid).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  const row = (d) => {
+    const over = !d.paid && d.due_date && d.due_date < t;
+    const due = d.due_date ? `${over ? 'überfällig seit' : 'fällig am'} ${fullDate(d.due_date)}` : 'ohne Fälligkeit';
+    const sub = [DEBT_KINDS[d.kind], due, d.note].filter(Boolean).join(' · ');
+    return `<li class="row debt ${d.paid ? 'done' : ''}"><button class="check ${d.paid ? 'on' : ''}" data-a="paydebt" data-id="${d.id}" aria-label="${d.paid ? 'Wieder als offen markieren' : 'Als bezahlt markieren'}"><svg viewBox="0 0 24 24"><path d="M6.5 12.5l3.8 3.8 7.2-8"/></svg></button>
+      <button class="main" data-a="editdebt" data-id="${d.id}"><span class="title">${esc(d.name)}</span><span class="sub ${over ? 'overdue' : ''}">${esc(sub)}</span></button>
+      <span class="amount">${eur.format(Number(d.amount))}</span></li>`;
   };
-  const total = act.reduce((s, a) => s + balances.get(a.id).value, 0);
-  const invest = act.filter((a) => a.kind === 'anlage').reduce((s, a) => s + balances.get(a.id).value, 0);
-  const body = act.length
-    ? `<ul class="list">${act.map(row).join('')}</ul>
-       <p class="sumline"><span>Gesamt: <b>${eur.format(total)}</b></span>${invest ? `<span>ohne Anlagen: <b>${eur.format(total - invest)}</b></span>` : ''}</p>`
-    : '<p class="hint" style="margin:0">Lege deine Konten an, um jederzeit zu sehen, wie viel Geld auf welchem Konto liegt.</p>';
-  return `<section class="card"><h2>Konten &amp; Kontostand</h2>${body}
-    ${idle.length ? `<details style="margin-top:8px"><summary>Nicht genutzt (${idle.length})</summary><ul class="list">${idle.map(row).join('')}</ul></details>` : ''}
-    <button class="btn block" data-a="addacc" style="margin-top:10px">Konto hinzufügen</button></section>`;
+  const total = open.reduce((s, d) => s + Number(d.amount), 0);
+  return `<section class="card"><h2>Schulden &amp; offene Zahlungen</h2>
+    ${open.length ? `<ul class="list">${open.map(row).join('')}</ul><p class="sumline"><span>Offen gesamt: <b>${eur.format(total)}</b></span><span>${open.length} Posten</span></p>` : '<p class="hint" style="margin:0">Nichts offen. Trage hier Klarna-Käufe, Raten oder Geliehenes ein, damit sie dein Budget mindern.</p>'}
+    ${paid.length ? `<details class="idle"><summary>Bezahlt (${paid.length})</summary><ul class="list">${paid.map(row).join('')}</ul></details>` : ''}
+    <button class="btn block" data-a="adddebt" style="margin-top:10px">Schuld eintragen</button></section>`;
+}
+
+function debtForm(d) {
+  openSheet({
+    title: d ? 'Eintrag bearbeiten' : 'Neue Schuld',
+    text: 'Zum Beispiel ein Klarna-Kauf, eine Rate oder Geld, das du jemandem schuldest. Offene Posten werden von deinem freien Budget abgezogen.',
+    fields: [
+      { name: 'name', label: 'Wofür / an wen', required: true, value: d?.name, placeholder: 'z. B. Klarna – Zalando' },
+      [
+        { name: 'amount', label: 'Offener Betrag (€)', required: true, inputmode: 'decimal', placeholder: '0,00', value: d ? String(d.amount).replace('.', ',') : '' },
+        { name: 'kind', label: 'Art', type: 'select', value: d?.kind || 'klarna', options: Object.entries(DEBT_KINDS) },
+      ],
+      { name: 'due_date', label: 'Fällig am (optional)', type: 'date', value: d?.due_date },
+      { name: 'note', label: 'Notiz (optional)', value: d?.note },
+    ],
+    onSave: (v) => {
+      const amount = parseAmount(v.amount);
+      if (amount === null || amount < 0) {
+        toast('Bitte einen gültigen Betrag eingeben.');
+        return false;
+      }
+      const row = { name: v.name, kind: v.kind, amount, due_date: v.due_date, note: v.note };
+      return run(() => (d ? db.update('debts', d.id, row) : db.insert('debts', row)), 'Gespeichert');
+    },
+    onDelete: d && (() => run(() => db.remove('debts', d.id), 'Gelöscht')),
+  });
+}
+
+// Detailansicht eines Kontos: alle Buchungen des Monats, neueste oben, nach Tagen gruppiert.
+function viewAccountDetail() {
+  const a = state.accounts.find((x) => x.id === state.accDetail);
+  if (!a) {
+    state.accDetail = null;
+    return viewFinOverview();
+  }
+  const b = balancesNow().get(a.id);
+  const br = brandOf(a);
+  const t = today();
+  const month = [...state.tx, ...recurringFor(state.finMonth)].filter((x) => x.account_id === a.id || x.to_account_id === a.id);
+  const net = (x) => (x.type === 'umbuchung' ? (x.to_account_id === a.id ? 1 : -1) * Number(x.amount) : x.type === 'einnahme' ? Number(x.amount) : -Number(x.amount));
+  const inc = month.filter((x) => net(x) > 0).reduce((s, x) => s + net(x), 0);
+  const out = month.filter((x) => net(x) < 0).reduce((s, x) => s - net(x), 0);
+  const seg = state.accSeg;
+  const shown = month
+    .filter((x) => seg === 'alle' || (seg === 'ein' ? net(x) > 0 : net(x) < 0))
+    .sort((p, q) => q.date.localeCompare(p.date) || (q.created_at || '').localeCompare(p.created_at || ''));
+  const row = (x) => {
+    const v = net(x);
+    const transfer = x.type === 'umbuchung';
+    const title = transfer ? x.merchant || 'Umbuchung' : x.merchant || x.note || x.category || (x.type === 'einnahme' ? 'Einnahme' : 'Ausgabe');
+    const sub = [
+      transfer ? `${accName(x.account_id) || '?'} → ${accName(x.to_account_id) || '?'}` : x.category || (x.type === 'ausgabe' && !x.recurringId ? 'Kategorie wählen' : ''),
+      x.source === 'apple_pay' ? 'Apple Pay' : '',
+      x.recurringId ? (x.date > t ? 'geplant' : 'fest') : '',
+    ].filter(Boolean).join(' · ');
+    const target = x.recurringId ? `data-a="editrec" data-id="${x.recurringId}"` : `data-a="edittx" data-id="${x.id}"`;
+    return `<li class="row"><span class="dot ${v > 0 ? 'in' : 'out'}">${transfer ? '⇄' : v > 0 ? '↓' : '↑'}</span>
+      <button class="main" ${target}><span class="title">${esc(title)}</span><span class="sub">${esc(sub)}</span></button>
+      <span class="amount ${v > 0 ? 'pos' : 'neg'}">${v > 0 ? '+' : '−'}${eur.format(Math.abs(v))}</span></li>`;
+  };
+  let lastDay = '';
+  const groups = shown
+    .map((x) => {
+      const head = x.date === lastDay ? '' : `<li class="dayh">${esc(relDay(x.date) === 'Heute' || relDay(x.date) === 'Gestern' ? `${relDay(x.date)} · ${dayLabel(x.date)}` : dayLabel(x.date))}</li>`;
+      lastDay = x.date;
+      return head + row(x);
+    })
+    .join('');
+  const segBtn = ([id, label]) => `<button class="${seg === id ? 'on' : ''}" data-a="accseg" data-v="${id}" aria-pressed="${seg === id}">${label}</button>`;
+  return `<div class="backrow"><button class="linkbtn" data-a="accback">‹ Alle Konten</button><button class="linkbtn" data-a="editacc" data-id="${a.id}">Bearbeiten</button></div>
+    <section class="acard big ${br.cls}" aria-label="${esc(a.name)}">
+      <span class="acard-top">${br.logo}<span class="acard-kind">${KINDS[a.kind] || ''}</span></span>
+      <span class="acard-bal">${eur.format(b.value)}</span>
+      <span class="acard-foot"><span>${esc(a.name)}</span><span>${a.balance_date ? `Stand-Eintrag ${fullDate(a.balance_date)}` : 'noch kein Eintrag'}</span></span></section>
+    ${finMonthNav()}
+    <div class="stats"><div class="stat"><span>Eingänge</span><b class="c-green">+${eur.format(inc)}</b></div><div class="stat"><span>Ausgänge</span><b>−${eur.format(out)}</b></div></div>
+    <div class="seg" role="group" aria-label="Filter">${[['alle', 'Alle'], ['ein', 'Einnahmen'], ['aus', 'Ausgaben']].map(segBtn).join('')}</div>
+    <section class="card">${shown.length ? `<ul class="list bookings">${groups}</ul><p class="sumline"><span>${shown.length} Buchung${shown.length === 1 ? '' : 'en'}</span></p>` : '<p class="empty">Keine Buchungen in diesem Monat</p>'}</section>`;
 }
 
 function viewFinOverview() {
@@ -834,13 +980,15 @@ function viewFinOverview() {
         <div class="bar"><i style="width:${Math.max(3, (v / max) * 100)}%"></i></div></div>`,
     )
     .join('');
-  return `${finMonthNav()}
+  return `${budgetHero()}
+    ${accountsRow()}
+    ${finMonthNav()}
     <div class="stats">
       <div class="stat wide"><span>Saldo im Monat</span><b class="${saldo < 0 ? 'c-red' : 'c-green'}">${eur.format(saldo)}</b></div>
       <div class="stat"><span>Einnahmen</span><b>${eur.format(inc)}</b></div>
       <div class="stat"><span>Ausgaben</span><b>${eur.format(exp)}</b></div>
     </div>
-    ${accountsCard()}
+    ${debtsCard()}
     <section class="card"><h2>Anstehend · nächste 30 Tage</h2>
       ${
         upcoming
@@ -854,7 +1002,7 @@ function viewFinOverview() {
 const NO_CAT = '__none__';
 
 // Buchungen des Monats: je Konto und Kategorie filterbar, getrennt nach Einnahmen und Ausgaben,
-// jeweils nach Datum aufsteigend (1. oben, 30. unten).
+// jeweils nach Datum absteigend (neueste oben, älteste unten).
 function viewFinBookings() {
   const month = [...state.tx, ...recurringFor(state.finMonth)];
   const inAcc = month.filter((x) => state.accFilter === 'alle' || x.account_id === state.accFilter || x.to_account_id === state.accFilter);
@@ -879,6 +1027,7 @@ function viewFinBookings() {
 
   // Umbuchungen haben keine Kategorie und erscheinen nur ohne Kategorie-Filter.
   const all = inAcc.filter((x) => (x.type === 'umbuchung' ? state.catFilter === 'alle' : state.catFilter === 'alle' || (state.catFilter === NO_CAT ? !x.category : x.category === state.catFilter)));
+  // Neueste Buchung oben, älteste unten.
   const byDate = (a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || '');
   const incomes = all.filter((x) => x.type === 'einnahme').sort(byDate);
   const expenses = all.filter((x) => x.type === 'ausgabe').sort(byDate);
@@ -1034,6 +1183,7 @@ function viewFinReview() {
 }
 
 function viewFin() {
+  if (state.accDetail) return `${head('Finanzen')}${viewAccountDetail()}`;
   const body = { uebersicht: viewFinOverview, buchungen: viewFinBookings, fix: viewFinFixed, rueckblick: viewFinReview }[state.finView]();
   return `${finHead()}${body}`;
 }
@@ -1960,12 +2110,45 @@ const actions = {
   delinvite: (el) => run(() => db.remove('invites', el.dataset.id), 'Einladung zurückgezogen'),
   finview: (el) => {
     state.finView = el.dataset.v;
+    state.accDetail = null;
     render();
     window.scrollTo(0, 0);
   },
   accfilter: (el) => {
     state.accFilter = el.dataset.id;
     render();
+  },
+  accopen: (el) => {
+    state.accDetail = el.dataset.id;
+    state.accSeg = 'alle';
+    state.anim = 'next';
+    render();
+    window.scrollTo(0, 0);
+  },
+  accback: () => {
+    state.accDetail = null;
+    state.anim = 'prev';
+    render();
+    window.scrollTo(0, 0);
+  },
+  accseg: (el) => {
+    state.accSeg = el.dataset.v;
+    render();
+  },
+  adddebt: () => debtForm(),
+  editdebt: (el) => debtForm(state.debts.find((x) => x.id === el.dataset.id)),
+  paydebt: (el) => {
+    const d = state.debts.find((x) => x.id === el.dataset.id);
+    if (d) run(() => db.update('debts', d.id, { paid: !d.paid }), d.paid ? 'Wieder offen' : 'Als bezahlt markiert');
+  },
+  gofin: (el) => {
+    state.tab = 'finanzen';
+    state.finView = 'uebersicht';
+    state.accDetail = el.dataset.id || null;
+    state.accSeg = 'alle';
+    state.anim = 'view';
+    render();
+    window.scrollTo(0, 0);
   },
   addacc: () => accForm(),
   editacc: (el) => accForm(state.accounts.find((x) => x.id === el.dataset.id)),
