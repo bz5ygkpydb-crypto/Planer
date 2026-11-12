@@ -578,7 +578,7 @@ function viewToday() {
   const mFrom = iso(cur);
   const mTo = iso(monthEnd(cur));
   const monthAll = [...state.hist.filter((x) => x.date >= mFrom && x.date <= mTo), ...recurringFor(cur)];
-  const spent = sumOf(monthAll, 'ausgabe');
+  const spent = monthFigures(cur, state.hist.filter((x) => x.date >= mFrom && x.date <= mTo)).fixExp;
   const bals = balancesNow();
   const bud = budgetNow();
   const soon = upcomingRecurring(7).slice(0, 3);
@@ -606,7 +606,7 @@ function viewToday() {
     <div class="tiles">
       <button class="tile" data-a="goday" data-date="${t}"><b>${todayEv.length}</b><span>Termine heute</span></button>
       <button class="tile" data-a="tab" data-tab="todos"><b>${dueTodos.length}</b><span>Heute fällig</span></button>
-      <button class="tile" data-a="tab" data-tab="finanzen"><b>${eur.format(spent).replace(/,00(?=\s)/, '')}</b><span>Ausgaben im Monat</span></button>
+      <button class="tile" data-a="tab" data-tab="finanzen"><b>${eur.format(spent).replace(/,00(?=\s)/, '')}</b><span>Feste Ausgaben</span></button>
     </div>
     <section class="card"><h2>Termine heute</h2>${evRows ? `<ul class="list">${evRows}</ul>` : '<p class="empty">Keine Termine heute. Genieß den freien Tag ✨</p>'}</section>
     <section class="card"><h2>Zu erledigen</h2>
@@ -621,7 +621,7 @@ function viewToday() {
                .filter((a) => a.active)
                .map((a) => `<button class="mini ${brandOf(a).cls}" data-a="gofin" data-id="${a.id}"><span>${esc(a.name)}</span><b>${eur.format(bals.get(a.id).value)}</b></button>`)
                .join('')}</div>`
-          : `<div class="stats" style="margin:0"><div class="stat" style="grid-column:1/-1"><span>Ausgaben im ${now.toLocaleDateString('de-DE', { month: 'long' })}</span><b>${eur.format(spent)}</b></div></div>`
+          : `<div class="stats" style="margin:0"><div class="stat" style="grid-column:1/-1"><span>Feste Ausgaben im ${now.toLocaleDateString('de-DE', { month: 'long' })}</span><b>${eur.format(spent)}</b></div></div>`
       }
       ${soonRows ? `<ul class="list" style="margin-top:10px">${soonRows}</ul>` : ''}
     </section>`;
@@ -785,6 +785,17 @@ function finMonthNav() {
     </div>`;
 }
 
+// Monatszahlen: Ausgaben sind nur die festen (Abos, Miete ...), Einnahmen die festen plus einmalige Extra-Einnahmen.
+// Eine einmalige Einnahme mit gleichem Betrag wie ein fester Posten zählt nicht doppelt (z. B. Gehalt aus dem Bankimport).
+function monthFigures(month, txList) {
+  const fixed = recurringFor(month);
+  const fixInc = sumOf(fixed, 'einnahme');
+  const fixExp = sumOf(fixed, 'ausgabe');
+  const amts = fixed.filter((x) => x.type === 'einnahme').map((x) => Number(x.amount));
+  const extra = txList.filter((x) => x.type === 'einnahme' && !amts.includes(Number(x.amount))).reduce((s, x) => s + Number(x.amount), 0);
+  return { fixInc, fixExp, extra, income: fixInc + extra, saldo: fixInc + extra - fixExp };
+}
+
 // ---------- Konten als Karten, Budget, Schulden ----------
 const DEBT_KINDS = { klarna: 'Klarna / Später bezahlen', rate: 'Ratenzahlung', privat: 'Privat geliehen', sonstig: 'Sonstiges' };
 
@@ -798,13 +809,24 @@ function brandOf(a) {
   return { cls: 'b-def', logo: `<span class="logo"><i class="lg-sq">${esc((n.trim()[0] || '?').toUpperCase())}</i><span>${esc(n)}</span></span>` };
 }
 
+// Kreditkarte mit Limit: groß der noch verfügbare Betrag, darunter Balken und genutzter Anteil.
+function cardBalance(a, b) {
+  const limit = Number(a.credit_limit) || 0;
+  if (a.kind !== 'kredit' || !limit) return `<span class="acard-bal">${eur.format(b.value)}</span>`;
+  const used = Math.max(0, -b.value);
+  const pct = Math.min(100, Math.round((used / limit) * 100));
+  return `<span class="acard-bal"><small>Verfügbar</small>${eur.format(limit - used)}</span>
+    <span class="limit"><i style="width:${pct}%"></i></span>
+    <span class="limit-t">Genutzt ${eur.format(used)} von ${eur.format(limit)}</span>`;
+}
+
 function accountCard(a, b) {
   const br = brandOf(a);
   const age = a.balance_date ? dayDiff(a.balance_date, today()) : null;
   const stale = age === null || age > 7;
   return `<button class="acard ${br.cls}" data-a="accopen" data-id="${a.id}" aria-label="${esc(a.name)} öffnen">
     <span class="acard-top">${br.logo}<span class="acard-kind">${KINDS[a.kind] || ''}</span></span>
-    <span class="acard-bal">${eur.format(b.value)}</span>
+    ${cardBalance(a, b)}
     <span class="acard-foot"><span>${esc(a.name)}</span>${stale ? '<span class="acard-warn">Stand prüfen</span>' : ''}</span></button>`;
 }
 
@@ -939,7 +961,7 @@ function viewAccountDetail() {
   return `<div class="backrow"><button class="linkbtn" data-a="accback">‹ Alle Konten</button><button class="linkbtn" data-a="editacc" data-id="${a.id}">Bearbeiten</button></div>
     <section class="acard big ${br.cls}" aria-label="${esc(a.name)}">
       <span class="acard-top">${br.logo}<span class="acard-kind">${KINDS[a.kind] || ''}</span></span>
-      <span class="acard-bal">${eur.format(b.value)}</span>
+      ${cardBalance(a, b)}
       <span class="acard-foot"><span>${esc(a.name)}</span><span>${a.balance_date ? `Stand-Eintrag ${fullDate(a.balance_date)}` : 'noch kein Eintrag'}</span></span></section>
     ${finMonthNav()}
     <div class="stats"><div class="stat"><span>Eingänge</span><b class="c-green">+${eur.format(inc)}</b></div><div class="stat"><span>Ausgänge</span><b>−${eur.format(out)}</b></div></div>
@@ -949,9 +971,8 @@ function viewAccountDetail() {
 
 function viewFinOverview() {
   const all = [...state.tx, ...recurringFor(state.finMonth)];
-  const inc = sumOf(all, 'einnahme');
+  const fig = monthFigures(state.finMonth, state.tx);
   const exp = sumOf(all, 'ausgabe');
-  const saldo = inc - exp;
   const t = today();
   const next = upcomingRecurring(30);
   const shown = next.slice(0, 5);
@@ -984,9 +1005,9 @@ function viewFinOverview() {
     ${accountsRow()}
     ${finMonthNav()}
     <div class="stats">
-      <div class="stat wide"><span>Saldo im Monat</span><b class="${saldo < 0 ? 'c-red' : 'c-green'}">${eur.format(saldo)}</b></div>
-      <div class="stat"><span>Einnahmen</span><b>${eur.format(inc)}</b></div>
-      <div class="stat"><span>Ausgaben</span><b>${eur.format(exp)}</b></div>
+      <div class="stat wide"><span>Saldo im Monat (fest)</span><b class="${fig.saldo < 0 ? 'c-red' : 'c-green'}">${eur.format(fig.saldo)}</b></div>
+      <div class="stat"><span>Einnahmen</span><b>${eur.format(fig.income)}</b>${fig.extra > 0 ? `<small class="statnote">davon ${eur.format(fig.extra)} extra</small>` : ''}</div>
+      <div class="stat"><span>Feste Ausgaben</span><b>${eur.format(fig.fixExp)}</b></div>
     </div>
     ${debtsCard()}
     <section class="card"><h2>Anstehend · nächste 30 Tage</h2>
@@ -1690,28 +1711,42 @@ function accForm(acc) {
       acc
         ? `Aktuell berechnet: ${eur.format(cur.value)}. Das ist dein Eintrag vom ${fullDate(acc.balance_date)} (${eur.format(cur.base)}) plus alle Buchungen und fälligen festen Posten seitdem. `
         : 'Gib den Stand ein, den dein Konto jetzt hat. Ab dann rechnet die App neue Buchungen automatisch dazu. '
-    }Weicht der Betrag von deiner Bank ab, trage hier den richtigen ein. Bei einer Kreditkarte gibst du den offenen Betrag als normale Zahl ein, die App zählt ihn als Minus.`,
+    }Weicht der Betrag von deiner Bank ab, trage hier den richtigen ein. Bei einer Kreditkarte gibst du das Limit und den noch verfügbaren Betrag ein.`,
     fields: [
       { name: 'name', label: 'Bezeichnung', required: true, value: acc?.name, placeholder: 'z. B. ING, Trade Republic' },
       [
         { name: 'kind', label: 'Art', type: 'select', value: acc?.kind || 'giro', options: Object.entries(KINDS) },
         { name: 'active', label: 'Wird genutzt', type: 'select', value: acc && !acc.active ? '0' : '1', options: [['1', 'Ja'], ['0', 'Nein']] },
       ],
+      { name: 'credit_limit', label: 'Kreditlimit (€)', showIf: 'kind=kredit', inputmode: 'decimal', placeholder: '6000', value: acc?.credit_limit ? String(acc.credit_limit).replace('.', ',') : '' },
       [
-        { name: 'balance', label: 'Kontostand (€)', required: true, placeholder: '0,00', value: acc ? String(shown).replace('.', ',') : '' },
+        { name: 'balance', label: 'Kontostand (€)', required: true, showIf: 'kind!=kredit', placeholder: '0,00', value: acc ? String(shown).replace('.', ',') : '' },
+        { name: 'avail', label: 'Noch verfügbar (€)', required: true, showIf: 'kind=kredit', inputmode: 'decimal', placeholder: '0,00', value: acc && acc.credit_limit ? String(Math.round((Number(acc.credit_limit) + cur.value) * 100) / 100).replace('.', ',') : '' },
         { name: 'balance_date', label: 'Stand vom', type: 'date', value: today() },
       ],
     ],
     onSave: (v) => {
-      let balance = parseBalance(v.balance);
-      if (balance === null) {
-        toast('Bitte einen gültigen Kontostand eingeben.');
-        return false;
+      let balance;
+      let limit = null;
+      if (v.kind === 'kredit') {
+        // Kreditkarte: Limit und noch verfügbarer Betrag; intern wird der genutzte Betrag als Minus gespeichert.
+        limit = parseAmount(v.credit_limit);
+        const avail = parseAmount(v.avail);
+        if (limit === null || avail === null) {
+          toast('Bitte Kreditlimit und verfügbaren Betrag eingeben.');
+          return false;
+        }
+        balance = -(limit - avail);
+      } else {
+        balance = parseBalance(v.balance);
+        if (balance === null) {
+          toast('Bitte einen gültigen Kontostand eingeben.');
+          return false;
+        }
       }
-      if (v.kind === 'kredit') balance = -Math.abs(balance);
       // Ändert sich der Betrag nicht (z. B. nur der Name), bleibt der alte Eintrag samt Datum bestehen.
       const unchanged = acc && acc.balance_date && Math.abs(balance - cur.value) < 0.005;
-      const row = { name: v.name, kind: v.kind, active: v.active === '1' };
+      const row = { name: v.name, kind: v.kind, active: v.active === '1', credit_limit: limit };
       if (!unchanged) Object.assign(row, { balance, balance_date: v.balance_date || today(), balance_set_at: new Date().toISOString() });
       return run(() => (acc ? db.update('accounts', acc.id, row) : db.insert('accounts', row)), 'Gespeichert');
     },
