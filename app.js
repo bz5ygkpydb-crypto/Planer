@@ -83,6 +83,22 @@ function saveHiddenCals() {
   }
 }
 
+// Ausgeblendete Bereiche und Reiter, ebenfalls pro Gerät gemerkt.
+function loadHiddenUI() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('planer-hidden-ui')) || []);
+  } catch {
+    return new Set();
+  }
+}
+function saveHiddenUI() {
+  try {
+    localStorage.setItem('planer-hidden-ui', JSON.stringify([...state.hiddenUI]));
+  } catch {
+    /* Speicher nicht verfügbar */
+  }
+}
+
 // ---------- Zustand ----------
 const state = {
   tab: 'heute',
@@ -104,6 +120,7 @@ const state = {
   events: [],
   calendars: [],
   hiddenCals: loadHiddenCals(),
+  hiddenUI: loadHiddenUI(),
   todos: [],
   tx: [],
   recurring: [],
@@ -114,8 +131,6 @@ const state = {
   debts: [],
   accDetail: null,
   accSeg: 'alle',
-  accFilter: 'alle',
-  catFilter: 'alle',
   lastAcc: null,
   aliases: {},
   isOwner: false,
@@ -425,6 +440,7 @@ const ICONS = {
   finanzen: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="3.5"/><path d="M3 10.5h18M15.5 15h2"/></svg>',
   mehr: '<svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/></svg>',
 };
+const shown = (id) => !state.hiddenUI.has(id);
 const TABS = [
   ['heute', 'Heute'],
   ['kalender', 'Kalender'],
@@ -440,12 +456,19 @@ const FAB_ITEMS = [
 
 // Leiste und Schnell-Hinzufügen bleiben dauerhaft stehen (nur ihr Zustand wird aktualisiert),
 // dadurch kann sich der Marker in der Leiste weich von Tab zu Tab bewegen.
-$bar.innerHTML = `<nav><i class="ind"></i>${TABS.map(([id, label]) => `<button class="tab" data-a="tab" data-tab="${id}">${ICONS[id]}<span>${label}</span></button>`).join('')}</nav>`;
+const visibleTabs = () => TABS.filter(([id]) => id === 'mehr' || shown(`tab:${id}`));
+function buildBar() {
+  const tabs = visibleTabs();
+  $bar.innerHTML = `<nav style="--n:${tabs.length}"><i class="ind"></i>${tabs.map(([id, label]) => `<button class="tab" data-a="tab" data-tab="${id}">${ICONS[id]}<span>${label}</span></button>`).join('')}</nav>`;
+}
+buildBar();
 $fab.innerHTML = `<div class="fab-menu">${FAB_ITEMS.map(([k, label, icon], i) => `<button class="fab-item" style="--d:${(FAB_ITEMS.length - 1 - i) * 45}" data-a="fabadd" data-k="${k}">${icon}${label}</button>`).join('')}</div>
   <button class="fab-main" data-a="fab" aria-label="Neu hinzufügen" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
 
 function updateBar() {
-  const i = TABS.findIndex(([id]) => id === state.tab);
+  const tabs = visibleTabs();
+  if (!tabs.some(([id]) => id === state.tab)) state.tab = tabs[0][0];
+  const i = tabs.findIndex(([id]) => id === state.tab);
   $bar.hidden = false;
   $bar.querySelector('nav').style.setProperty('--i', i);
   $bar.querySelectorAll('.tab').forEach((b, j) => {
@@ -602,18 +625,18 @@ function viewToday() {
     .join('');
 
   return `${head(greeting, dayLabel(t))}
-    ${hero}
-    <div class="tiles">
+    ${shown('h:hero') ? hero : ''}
+    ${shown('h:tiles') ? `<div class="tiles">
       <button class="tile" data-a="goday" data-date="${t}"><b>${todayEv.length}</b><span>Termine heute</span></button>
       <button class="tile" data-a="tab" data-tab="todos"><b>${dueTodos.length}</b><span>Heute fällig</span></button>
       <button class="tile" data-a="tab" data-tab="finanzen"><b>${eur.format(spent).replace(/,00(?=\s)/, '')}</b><span>Feste Ausgaben</span></button>
-    </div>
-    <section class="card"><h2>Termine heute</h2>${evRows ? `<ul class="list">${evRows}</ul>` : '<p class="empty">Keine Termine heute. Genieß den freien Tag ✨</p>'}</section>
-    <section class="card"><h2>Zu erledigen</h2>
+    </div>` : ''}
+    ${shown('h:termine') ? `<section class="card"><h2>Termine heute</h2>${evRows ? `<ul class="list">${evRows}</ul>` : '<p class="empty">Keine Termine heute. Genieß den freien Tag ✨</p>'}</section>` : ''}
+    ${shown('h:todos') ? `<section class="card"><h2>Zu erledigen</h2>
       ${dueTodos.length ? `<ul class="list">${dueTodos.slice(0, 5).map(todoRow).join('')}</ul>` : '<p class="empty">Nichts fällig. Alles im grünen Bereich ✅</p>'}
       ${dueTodos.length > 5 ? `<p class="hint" style="margin:8px 0 0">+ ${dueTodos.length - 5} weitere unter „To-Dos“.</p>` : ''}
-    </section>
-    <section class="card"><h2>Geld</h2>
+    </section>` : ''}
+    ${shown('h:geld') ? `<section class="card"><h2>Geld</h2>
       ${
         state.accounts.some((a) => a.active)
           ? `<button class="moneytop" data-a="gofin"><span>Frei verfügbar</span><b class="${bud.free < 0 ? 'c-red' : ''}">${eur.format(bud.free)}</b><small>Konten ${eur.format(bud.cash)}${bud.debt ? ` · Schulden −${eur.format(bud.debt)}` : ''}${bud.fixed > 0 ? ` · Fixkosten −${eur.format(bud.fixed)}` : ''}</small></button>
@@ -624,7 +647,7 @@ function viewToday() {
           : `<div class="stats" style="margin:0"><div class="stat" style="grid-column:1/-1"><span>Feste Ausgaben im ${now.toLocaleDateString('de-DE', { month: 'long' })}</span><b>${eur.format(spent)}</b></div></div>`
       }
       ${soonRows ? `<ul class="list" style="margin-top:10px">${soonRows}</ul>` : ''}
-    </section>`;
+    </section>` : ''}`;
 }
 
 // ---------- Kalender ----------
@@ -765,13 +788,14 @@ const sumOf = (list, type) => list.filter((x) => x.type === type).reduce((s, x) 
 const signedEur = (x) => `${x.type === 'einnahme' ? '+' : '−'}${eur.format(Number(x.amount))}`;
 const FIN_VIEWS = [
   ['uebersicht', 'Übersicht'],
-  ['buchungen', 'Buchungen'],
-  ['fix', 'Fixkosten'],
+  ['planung', 'Planung'],
+  ['kategorien', 'Kategorien'],
   ['rueckblick', 'Rückblick'],
 ];
+const finViews = () => FIN_VIEWS.filter(([id]) => id === 'uebersicht' || shown(`fv:${id}`));
 
 function finHead() {
-  const seg = FIN_VIEWS.map(
+  const seg = finViews().map(
     ([id, label]) => `<button class="${state.finView === id ? 'on' : ''}" data-a="finview" data-v="${id}" aria-pressed="${state.finView === id}">${label}</button>`,
   ).join('');
   return `${head('Finanzen')}<div class="seg" role="group" aria-label="Ansicht">${seg}</div>`;
@@ -862,13 +886,13 @@ function budgetHero() {
   if (!state.accounts.some((a) => a.active)) {
     return `<section class="budget"><div class="hero-k">Frei verfügbar</div><div class="budget-n">–</div><div class="hero-s">Lege dein erstes Konto an, dann rechnet die App dein Budget aus.</div></section>`;
   }
-  const line = (label, v, sign) => `<div><span>${label}</span><b>${sign}${eur.format(Math.abs(v))}</b></div>`;
+  const chip = (label, v, sign) => `<div><span>${label}</span><b>${sign}${eur0.format(Math.abs(v))}</b></div>`;
   return `<section class="budget"><div class="hero-k">Frei verfügbar</div>
     <div class="budget-n">${eur.format(b.free)}</div>
-    <div class="budget-lines">
-      ${line('Auf den Konten', b.cash, b.cash < 0 ? '−' : '')}
-      ${line(`Offene Schulden${b.debtCount ? ` (${b.debtCount})` : ''}`, b.debt, '−')}
-      ${line('Fixkosten bis Monatsende', b.fixed, b.fixed > 0 ? '−' : '+')}
+    <div class="budget-chips">
+      ${chip('Konten', b.cash, b.cash < 0 ? '−' : '')}
+      ${chip(`Schulden${b.debtCount ? ` (${b.debtCount})` : ''}`, b.debt, '−')}
+      ${chip('Fixkosten', b.fixed, b.fixed > 0 ? '−' : '+')}
     </div>${b.invest ? `<div class="budget-foot">Dazu Anlagen: ${eur.format(b.invest)}</div>` : ''}</section>`;
 }
 
@@ -966,17 +990,58 @@ function viewAccountDetail() {
     ${finMonthNav()}
     <div class="stats"><div class="stat"><span>Eingänge</span><b class="c-green">+${eur.format(inc)}</b></div><div class="stat"><span>Ausgänge</span><b>−${eur.format(out)}</b></div></div>
     <div class="seg" role="group" aria-label="Filter">${[['alle', 'Alle'], ['ein', 'Einnahmen'], ['aus', 'Ausgaben']].map(segBtn).join('')}</div>
-    <section class="card">${shown.length ? `<ul class="list bookings">${groups}</ul><p class="sumline"><span>${shown.length} Buchung${shown.length === 1 ? '' : 'en'}</span></p>` : '<p class="empty">Keine Buchungen in diesem Monat</p>'}</section>`;
+    <section class="card">${shown.length ? `<ul class="list bookings">${groups}</ul><p class="sumline"><span>${shown.length} Buchung${shown.length === 1 ? '' : 'en'}</span></p>` : '<p class="empty">Keine Buchungen in diesem Monat</p>'}
+      <button class="btn block" data-a="addtx" style="margin-top:10px">Buchung hinzufügen</button></section>`;
 }
 
+const eur0 = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+const secHead = (title, right = '') => `<div class="sec"><h3>${title}</h3>${right}</div>`;
+
 function viewFinOverview() {
-  const all = [...state.tx, ...recurringFor(state.finMonth)];
   const fig = monthFigures(state.finMonth, state.tx);
-  const exp = sumOf(all, 'ausgabe');
+  const parts = [];
+  if (shown('f:budget')) parts.push(budgetHero());
+  if (shown('f:konten')) parts.push(secHead('Konten', '<button class="linkbtn" data-a="addacc">+ Konto</button>') + accountsRow());
+  if (shown('f:monat')) {
+    parts.push(`${secHead('Monat')}${finMonthNav()}
+      <div class="trio">
+        <div class="stat"><span>Einnahmen</span><b>${eur0.format(fig.income)}</b>${fig.extra > 0 ? `<small class="statnote">${eur0.format(fig.extra)} extra</small>` : ''}</div>
+        <div class="stat"><span>Fixkosten</span><b>${eur0.format(fig.fixExp)}</b></div>
+        <div class="stat saldo"><span>Saldo</span><b class="${fig.saldo < 0 ? 'c-red' : 'c-green'}">${eur0.format(fig.saldo)}</b></div>
+      </div>`);
+  }
+  if (shown('f:schulden')) parts.push(debtsCard());
+  return parts.join('') || '<p class="empty">Alles ausgeblendet. Unter „Mehr → Ansicht anpassen“ blendest du Bereiche wieder ein.</p>';
+}
+
+// Ausgaben (und Einnahmen) des Monats nach Kategorie, inklusive Apple Pay und Einkäufen.
+function viewFinCategories() {
+  const all = [...state.tx, ...recurringFor(state.finMonth)];
+  const block = (type, title, empty) => {
+    const byCat = new Map();
+    for (const x of all) {
+      if (x.type !== type) continue;
+      const k = x.category || 'Ohne Kategorie';
+      byCat.set(k, (byCat.get(k) || 0) + Number(x.amount));
+    }
+    const list = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
+    const total = list.reduce((s, [, v]) => s + v, 0);
+    const bars = list
+      .map(
+        ([k, v]) => `<div class="bar-row"><div class="bar-label"><span>${esc(k)}</span><span>${eur.format(v)} · ${Math.round((v / total) * 100)} %</span></div>
+          <div class="bar"><i style="width:${Math.max(3, (v / list[0][1]) * 100)}%"></i></div></div>`,
+      )
+      .join('');
+    return `<section class="card"><h2>${title}</h2>${bars || `<p class="empty">${empty}</p>`}${list.length ? `<p class="sumline"><span>Gesamt: <b>${eur.format(total)}</b></span></p>` : ''}</section>`;
+  };
+  return `${finMonthNav()}${block('ausgabe', 'Ausgaben nach Kategorie', 'Noch keine Ausgaben')}${block('einnahme', 'Einnahmen nach Kategorie', 'Noch keine Einnahmen')}`;
+}
+
+function upcomingCard() {
   const t = today();
   const next = upcomingRecurring(30);
-  const shown = next.slice(0, 5);
-  const upcoming = shown
+  const shownRows = next.slice(0, 6);
+  const rows = shownRows
     .map((x) => {
       const d = parseISO(x.date);
       const inDays = Math.round((d - parseISO(t)) / 864e5);
@@ -987,126 +1052,8 @@ function viewFinOverview() {
         <span class="amount ${x.type === 'einnahme' ? 'pos' : 'neg'}">${signedEur(x)}</span></li>`;
     })
     .join('');
-  const byCat = new Map();
-  for (const x of all) {
-    if (x.type !== 'ausgabe') continue;
-    const k = x.category || 'Ohne Kategorie';
-    byCat.set(k, (byCat.get(k) || 0) + Number(x.amount));
-  }
-  const cats = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
-  const max = cats.length ? cats[0][1] : 1;
-  const bars = cats
-    .map(
-      ([k, v]) => `<div class="bar-row"><div class="bar-label"><span>${esc(k)}</span><span>${eur.format(v)} · ${Math.round((v / exp) * 100)} %</span></div>
-        <div class="bar"><i style="width:${Math.max(3, (v / max) * 100)}%"></i></div></div>`,
-    )
-    .join('');
-  return `${budgetHero()}
-    ${accountsRow()}
-    ${finMonthNav()}
-    <div class="stats">
-      <div class="stat wide"><span>Saldo im Monat (fest)</span><b class="${fig.saldo < 0 ? 'c-red' : 'c-green'}">${eur.format(fig.saldo)}</b></div>
-      <div class="stat"><span>Einnahmen</span><b>${eur.format(fig.income)}</b>${fig.extra > 0 ? `<small class="statnote">davon ${eur.format(fig.extra)} extra</small>` : ''}</div>
-      <div class="stat"><span>Feste Ausgaben</span><b>${eur.format(fig.fixExp)}</b></div>
-    </div>
-    ${debtsCard()}
-    <section class="card"><h2>Anstehend · nächste 30 Tage</h2>
-      ${
-        upcoming
-          ? `<ul class="list">${upcoming}</ul>${next.length > shown.length ? `<p class="hint" style="margin:8px 0 0">+ ${next.length - shown.length} weitere unter „Fixkosten“.</p>` : ''}`
-          : '<p class="hint" style="margin:0">Hier siehst du, was in den nächsten 30 Tagen abgebucht oder eingenommen wird. Trage dafür unter „Fixkosten“ deine festen Einnahmen und Ausgaben ein.</p>'
-      }
-    </section>
-    <section class="card"><h2>Ausgaben nach Kategorie</h2>${bars || '<p class="empty">Noch keine Ausgaben</p>'}</section>`;
-}
-
-const NO_CAT = '__none__';
-
-// Buchungen des Monats: je Konto und Kategorie filterbar, getrennt nach Einnahmen und Ausgaben,
-// jeweils nach Datum absteigend (neueste oben, älteste unten).
-function viewFinBookings() {
-  const month = [...state.tx, ...recurringFor(state.finMonth)];
-  const inAcc = month.filter((x) => state.accFilter === 'alle' || x.account_id === state.accFilter || x.to_account_id === state.accFilter);
-  const inAccTx = inAcc.filter((x) => x.type !== 'umbuchung');
-
-  // Dropdown: alle gespeicherten Kategorien (plus solche, die nur in den Buchungen vorkommen),
-  // zuerst die mit Umsatz in diesem Monat (größter Betrag oben), mit dem Betrag dahinter.
-  const known = [...new Set([...state.categories, ...state.incomeCategories, ...month.map((x) => x.category).filter(Boolean)])];
-  if (state.catFilter !== 'alle' && state.catFilter !== NO_CAT && !known.includes(state.catFilter)) state.catFilter = 'alle';
-  const total = (c) => inAccTx.filter((x) => (c === NO_CAT ? !x.category : x.category === c)).reduce((s, x) => s + Number(x.amount), 0);
-  const withSum = known.map((c) => [c, total(c)]);
-  const used = withSum.filter(([, t]) => t > 0).sort((a, b) => b[1] - a[1]);
-  const unused = withSum.filter(([, t]) => !(t > 0)).sort((a, b) => a[0].localeCompare(b[0]));
-  const noneTotal = total(NO_CAT);
-  const opt = (value, label) => `<option value="${esc(value)}" ${state.catFilter === value ? 'selected' : ''}>${esc(label)}</option>`;
-  const catOptions = [
-    opt('alle', 'Alle Kategorien'),
-    ...used.map(([c, t]) => opt(c, `${c} · ${eur.format(t)}`)),
-    noneTotal > 0 ? opt(NO_CAT, `Ohne Kategorie · ${eur.format(noneTotal)}`) : '',
-    ...unused.map(([c]) => opt(c, c)),
-  ].join('');
-
-  // Umbuchungen haben keine Kategorie und erscheinen nur ohne Kategorie-Filter.
-  const all = inAcc.filter((x) => (x.type === 'umbuchung' ? state.catFilter === 'alle' : state.catFilter === 'alle' || (state.catFilter === NO_CAT ? !x.category : x.category === state.catFilter)));
-  // Neueste Buchung oben, älteste unten.
-  const byDate = (a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || '');
-  const incomes = all.filter((x) => x.type === 'einnahme').sort(byDate);
-  const expenses = all.filter((x) => x.type === 'ausgabe').sort(byDate);
-  const transfers = all.filter((x) => x.type === 'umbuchung').sort(byDate);
-
-  const chips = [['alle', 'Alle Konten'], ...state.accounts.filter((a) => a.active || a.id === state.accFilter).map((a) => [a.id, a.name])]
-    .map(([id, label]) => `<button class="calchip ${state.accFilter === id ? 'sel' : ''}" data-a="accfilter" data-id="${id}" aria-pressed="${state.accFilter === id}">${esc(label)}</button>`)
-    .join('');
-
-  const bookRow = (x) => {
-    const title = x.merchant || x.note || x.category || (x.type === 'einnahme' ? 'Einnahme' : 'Ausgabe');
-    const cat = x.category ? esc(x.category) : x.type === 'ausgabe' && !x.recurringId ? '<span class="tag-open">Kategorie wählen</span>' : '';
-    const sub = [state.accFilter === 'alle' ? esc(accName(x.account_id) || '') : '', cat, x.source === 'apple_pay' ? 'Apple Pay' : '', x.recurringId ? 'fest' : ''].filter(Boolean).join(' · ');
-    const target = x.recurringId ? `data-a="editrec" data-id="${x.recurringId}"` : `data-a="edittx" data-id="${x.id}"`;
-    const d = parseISO(x.date);
-    return `<li class="row"><span class="when"><b>${shortDate(x.date)}</b><small>${d.toLocaleDateString('de-DE', { weekday: 'short' })}</small></span>
-      <button class="main" ${target}><span class="title">${esc(title)}</span><span class="sub">${sub}</span></button>
-      <span class="amount ${x.type === 'einnahme' ? 'pos' : 'neg'}">${signedEur(x)}</span></li>`;
-  };
-  const section = (title, list, type, empty) => `<section class="card"><h2>${title}</h2>
-    ${
-      list.length
-        ? `<ul class="list">${list.map(bookRow).join('')}</ul><p class="sumline"><span>Summe: <b>${eur.format(sumOf(list, type))}</b></span><span>${list.length} Buchung${list.length === 1 ? '' : 'en'}</span></p>`
-        : `<p class="empty">${empty}</p>`
-    }</section>`;
-
-  // Umbuchungen: "ING → Advanzia Gold". Ist ein Konto gewählt, steht + (kommt rein) oder − (geht raus).
-  const transferRow = (x) => {
-    const d = parseISO(x.date);
-    const rel = state.accFilter === 'alle' ? '' : x.account_id === state.accFilter ? '−' : '+';
-    return `<li class="row"><span class="when"><b>${shortDate(x.date)}</b><small>${d.toLocaleDateString('de-DE', { weekday: 'short' })}</small></span>
-      <button class="main" data-a="edittx" data-id="${x.id}"><span class="title">${esc(x.merchant || 'Umbuchung')}</span><span class="sub">${esc(accName(x.account_id) || '?')} → ${esc(accName(x.to_account_id) || '?')}</span></button>
-      <span class="amount">${rel}${eur.format(Number(x.amount))}</span></li>`;
-  };
-  const transferCard = transfers.length
-    ? `<section class="card"><h2>Umbuchungen</h2><ul class="list">${transfers.map(transferRow).join('')}</ul>
-        <p class="sumline"><span>Zählt nicht als Einnahme oder Ausgabe</span><span>${transfers.length} Buchung${transfers.length === 1 ? '' : 'en'}</span></p></section>`
-    : '';
-
-  // Wofür ausgegeben: Ausgaben dieses Kontos und Monats nach Kategorie (nur wenn keine Kategorie gewählt ist)
-  const byCat = new Map();
-  for (const x of expenses) byCat.set(x.category || 'Ohne Kategorie', (byCat.get(x.category || 'Ohne Kategorie') || 0) + Number(x.amount));
-  const catList = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
-  const expTotal = sumOf(expenses, 'ausgabe');
-  const bars = catList
-    .map(
-      ([k, v]) => `<div class="bar-row"><div class="bar-label"><span>${esc(k)}</span><span>${eur.format(v)} · ${Math.round((v / expTotal) * 100)} %</span></div>
-        <div class="bar"><i style="width:${Math.max(3, (v / catList[0][1]) * 100)}%"></i></div></div>`,
-    )
-    .join('');
-
-  return `${finMonthNav()}
-    ${state.accounts.length ? `<div class="calchips">${chips}</div>` : ''}
-    <select class="filtersel" data-c="catfilter" aria-label="Nach Kategorie filtern">${catOptions}</select>
-    ${section('Einnahmen', incomes, 'einnahme', 'Keine Einnahmen')}
-    ${section('Ausgaben', expenses, 'ausgabe', 'Keine Ausgaben')}
-    ${transferCard}
-    ${state.catFilter === 'alle' && catList.length ? `<section class="card"><h2>Wofür ausgegeben</h2>${bars}</section>` : ''}`;
+  return `<section class="card"><h2>Anstehend · nächste 30 Tage</h2>
+    ${rows ? `<ul class="list">${rows}</ul>${next.length > shownRows.length ? `<p class="hint" style="margin:8px 0 0">+ ${next.length - shownRows.length} weitere</p>` : ''}` : '<p class="hint" style="margin:0">Nichts anstehend. Feste Einnahmen und Ausgaben trägst du weiter unten bei „Feste Posten“ ein.</p>'}</section>`;
 }
 
 // Feste Einnahmen und Ausgaben (Abos, Gehalt, Miete ...). "Bis" leer = unbefristet.
@@ -1117,19 +1064,18 @@ function recRow(r) {
     <span class="amount ${r.type === 'einnahme' ? 'pos' : 'neg'}">${signedEur(r)}</span></li>`;
 }
 
-function viewFinFixed() {
+function viewFinPlan() {
   const t = today();
   const live = (r) => !r.end_date || r.end_date >= t;
   const active = state.recurring.filter(live);
   const ended = state.recurring.filter((r) => !live(r));
   const perMonth = (type) => active.filter((r) => r.type === type && r.start_date <= t).reduce((s, r) => s + Number(r.amount) / (r.interval_months || 1), 0);
-  const section = (type, title, addLabel, empty) => {
+  const group = (type, title) => {
     const list = active.filter((r) => r.type === type).sort((a, b) => (a.end_date || '9999').localeCompare(b.end_date || '9999') || a.name.localeCompare(b.name));
-    return `<section class="card"><h2>${title}</h2>
-      ${list.length ? `<ul class="list">${list.map(recRow).join('')}</ul><p class="sumline"><span>Zurzeit pro Monat: <b>${eur.format(perMonth(type))}</b></span></p>` : `<p class="hint" style="margin:0">${empty}</p>`}
-      <button class="btn block" data-a="addrec" data-type="${type}" style="margin-top:10px">${addLabel}</button></section>`;
+    return `<div class="fgroup"><div class="fgroup-h"><span>${title}</span><b>${eur.format(perMonth(type))} / Monat</b></div>
+      ${list.length ? `<ul class="list">${list.map(recRow).join('')}</ul>` : '<p class="hint" style="margin:0 0 4px">Noch nichts eingetragen.</p>'}</div>`;
   };
-  // Prognose: nur feste Posten, für die nächsten 6 Monate. Zeigt z. B. wirkt sich ein Jobwechsel aus.
+  // Prognose: nur feste Posten, für die nächsten 6 Monate.
   const months = [0, 1, 2, 3, 4, 5].map((i) => addMonths(monthStart(new Date()), i));
   const forecastRows = months
     .map((m) => {
@@ -1150,14 +1096,21 @@ function viewFinFixed() {
         : `<li><b>${esc(r.name)}</b> endet am ${fullDate(r.end_date)}. Danach sparst du ${eq} pro Monat.</li>`;
     })
     .join('');
-  return `<section class="card"><h2>Prognose · feste Posten</h2>
+  const parts = [];
+  if (shown('p:anstehend')) parts.push(upcomingCard());
+  if (shown('p:prognose')) {
+    parts.push(`<section class="card"><h2>Prognose · 6 Monate</h2>
       <div class="tablewrap"><table class="tbl"><thead><tr><th></th><th>Einnahmen</th><th>Ausgaben</th><th>Saldo</th></tr></thead><tbody>${forecastRows}</tbody></table></div>
-      <p class="hint" style="margin:8px 0 0">Beträge in €. Nur feste Einnahmen und Ausgaben, ohne Einkäufe. Ein Posten mit „Bis“ fällt ab dem Folgemonat automatisch weg, ein neuer mit „Von“ kommt automatisch dazu.</p>
-      ${notes ? `<ul class="notes">${notes}</ul>` : ''}
-    </section>
-    ${section('einnahme', 'Feste Einnahmen', 'Feste Einnahme hinzufügen', 'Gehalt, Kindergeld, Mieteinnahmen o. Ä. Du kannst festlegen, bis wann sie läuft, z. B. bis zu einem Jobwechsel, oder sie unbefristet lassen.')}
-    ${section('ausgabe', 'Feste Ausgaben &amp; Abos', 'Feste Ausgabe hinzufügen', 'Miete, Versicherungen, Streaming, Handyvertrag o. Ä.')}
-    ${ended.length ? `<section class="card"><details><summary>Beendet (${ended.length})</summary><ul class="list">${ended.map(recRow).join('')}</ul></details></section>` : ''}`;
+      <p class="hint" style="margin:8px 0 0">Beträge in €, nur feste Posten. Ein Posten mit „Bis“ fällt danach automatisch weg.</p>
+      ${notes ? `<ul class="notes">${notes}</ul>` : ''}</section>`);
+  }
+  if (shown('p:fest')) {
+    parts.push(`<section class="card"><h2>Feste Posten</h2>
+      ${group('einnahme', 'Einnahmen')}${group('ausgabe', 'Ausgaben &amp; Abos')}
+      <div class="btnrow" style="margin-top:6px"><button class="btn small grow" data-a="addrec" data-type="einnahme">+ Einnahme</button><button class="btn small grow" data-a="addrec" data-type="ausgabe">+ Ausgabe</button></div>
+      ${ended.length ? `<details class="idle"><summary>Beendet (${ended.length})</summary><ul class="list">${ended.map(recRow).join('')}</ul></details>` : ''}</section>`);
+  }
+  return parts.join('') || '<p class="empty">Alles ausgeblendet. Unter „Mehr → Ansicht anpassen“ blendest du Bereiche wieder ein.</p>';
 }
 
 // Rückblick: letzte 6 Monate als Tabelle, dazu Ausgaben je Kategorie und Monat.
@@ -1205,9 +1158,18 @@ function viewFinReview() {
 
 function viewFin() {
   if (state.accDetail) return `${head('Finanzen')}${viewAccountDetail()}`;
-  const body = { uebersicht: viewFinOverview, buchungen: viewFinBookings, fix: viewFinFixed, rueckblick: viewFinReview }[state.finView]();
+  if (!finViews().some(([id]) => id === state.finView)) state.finView = 'uebersicht';
+  const body = { uebersicht: viewFinOverview, planung: viewFinPlan, kategorien: viewFinCategories, rueckblick: viewFinReview }[state.finView]();
   return `${finHead()}${body}`;
 }
+
+const UI_GROUPS = [
+  ['Reiter unten', [['tab:heute', 'Heute'], ['tab:kalender', 'Kalender'], ['tab:todos', 'To-Dos'], ['tab:finanzen', 'Finanzen']]],
+  ['Startseite', [['h:hero', 'Nächster Termin'], ['h:tiles', 'Kacheln'], ['h:termine', 'Termine heute'], ['h:todos', 'Zu erledigen'], ['h:geld', 'Geld']]],
+  ['Finanzen: Reiter oben', [['fv:planung', 'Planung'], ['fv:kategorien', 'Kategorien'], ['fv:rueckblick', 'Rückblick']]],
+  ['Finanzen: Übersicht', [['f:budget', 'Frei verfügbar'], ['f:konten', 'Konten'], ['f:monat', 'Monatszahlen'], ['f:schulden', 'Schulden']]],
+  ['Finanzen: Planung', [['p:anstehend', 'Anstehend'], ['p:prognose', 'Prognose'], ['p:fest', 'Feste Posten']]],
+];
 
 function viewSettings() {
   const chipsOf = (list, k) =>
@@ -1249,6 +1211,10 @@ function viewSettings() {
          <button class="btn primary block" data-a="gentoken">Token erzeugen</button>`;
   return `${head('Einstellungen')}
     <section class="card"><h2>Konto</h2>${account}</section>
+    <section class="card"><h2>Ansicht anpassen</h2>
+      <p class="hint" style="margin-top:0">Schalte aus, was du nicht brauchst. Das gilt nur für dieses Gerät.</p>
+      ${UI_GROUPS.map(([title, items]) => `<div class="swgroup"><h4>${title}</h4>${items.map(([id, label]) => `<label class="swrow"><span>${label}</span><input type="checkbox" class="sw" data-a="toggleui" data-id="${id}" ${shown(id) ? 'checked' : ''}></label>`).join('')}</div>`).join('')}
+    </section>
     <section class="card"><h2>Darstellung</h2>
       <div class="swatches">${ACCENTS.map(([c, n]) => `<button class="sw ${(getLook().accent || ACCENTS[0][0]) === c ? 'on' : ''}" style="--c:${c}" data-a="setaccent" data-c="${c}" aria-label="${n}"></button>`).join('')}</div>
       <div class="seg" style="margin:0">${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([v, l]) => `<button class="${getLook().theme === v ? 'on' : ''}" data-a="settheme" data-t="${v}">${l}</button>`).join('')}</div>
@@ -1567,18 +1533,19 @@ function txAccountFields(tx, defAcc) {
   ];
 }
 
-function txForm(tx) {
+function txForm(tx, preset = {}) {
   const inMonth = iso(monthStart(state.finMonth)) === iso(monthStart(new Date()));
-  const defAcc = state.accounts.find((a) => a.id === state.lastAcc && a.active)?.id || state.accounts.find((a) => a.active)?.id || '';
+  const defAcc = preset.acc || state.accounts.find((a) => a.id === state.lastAcc && a.active)?.id || state.accounts.find((a) => a.active)?.id || '';
+  const type0 = tx?.type || preset.type || 'ausgabe';
   openSheet({
     title: tx ? 'Buchung bearbeiten' : 'Neue Buchung',
     text: tx?.type === 'umbuchung' ? 'Eine Umbuchung verschiebt Geld zwischen deinen Konten. Sie zählt nicht als Einnahme oder Ausgabe.' : '',
     fields: [
       [
-        { name: 'type', label: 'Art', type: 'select', value: tx?.type || 'ausgabe', options: [['ausgabe', 'Ausgabe'], ['einnahme', 'Einnahme'], ['umbuchung', 'Umbuchung (zwischen Konten)']] },
+        { name: 'type', label: 'Art', type: 'select', value: type0, options: [['ausgabe', 'Ausgabe'], ['einnahme', 'Einnahme'], ['umbuchung', 'Umbuchung (zwischen Konten)']] },
         { name: 'amount', label: 'Betrag (€)', required: true, inputmode: 'decimal', placeholder: '0,00', value: tx ? String(tx.amount).replace('.', ',') : '' },
       ],
-      ...categoryFields(tx?.type || 'ausgabe', tx?.category),
+      ...categoryFields(type0, tx?.category),
       ...txAccountFields(tx, defAcc),
       { name: 'merchant', label: 'Händler / Bezeichnung', value: tx?.merchant, placeholder: 'z. B. Kartenausgleich' },
       // Neu: einmalig oder wiederkehrend (z. B. Gehalt) mit Zeitraum. "Bis" leer = unbefristet.
@@ -1635,7 +1602,7 @@ function txForm(tx) {
         };
         return run(async () => {
           await db.insert('recurring', rec);
-          state.finView = 'fix';
+          state.finView = 'planung';
         }, v.type === 'einnahme' ? 'Feste Einnahme gespeichert' : 'Feste Ausgabe gespeichert');
       }
       const { repeat, start_date, end_date, ...single } = v;
@@ -2075,7 +2042,19 @@ const actions = {
   fabadd: (el) => {
     state.fabOpen = false;
     updateFab();
-    ({ event: eventForm, todo: todoForm, tx: txForm })[el.dataset.k]();
+    if (el.dataset.k === 'tx') txForm(null, state.tab === 'finanzen' && state.accDetail ? { acc: state.accDetail } : {});
+    else ({ event: eventForm, todo: todoForm })[el.dataset.k]();
+  },
+  addtx: () => txForm(null, { acc: state.accDetail, type: state.accSeg === 'ein' ? 'einnahme' : 'ausgabe' }),
+  toggleui: (el) => {
+    const id = el.dataset.id;
+    if (state.hiddenUI.has(id)) state.hiddenUI.delete(id);
+    else state.hiddenUI.add(id);
+    saveHiddenUI();
+    if (id.startsWith('tab:')) {
+      buildBar();
+      updateBar();
+    }
   },
   addevent: () => eventForm(),
   selday: (el) => {
@@ -2148,10 +2127,6 @@ const actions = {
     state.accDetail = null;
     render();
     window.scrollTo(0, 0);
-  },
-  accfilter: (el) => {
-    state.accFilter = el.dataset.id;
-    render();
   },
   accopen: (el) => {
     state.accDetail = el.dataset.id;
@@ -2257,10 +2232,6 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
   if (e.target.dataset.c === 'priofilter') {
     state.prioFilter = e.target.value;
-    render();
-  }
-  if (e.target.dataset.c === 'catfilter') {
-    state.catFilter = e.target.value;
     render();
   }
   if (e.target.dataset.c === 'icsfile') {
