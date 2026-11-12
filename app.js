@@ -567,7 +567,7 @@ function todoRow(x) {
   const sub = when ? `<span class="sub ${overdue ? 'overdue' : ''}">${overdue ? 'Überfällig · ' : ''}${when}</span>` : '';
   return `<li class="row trow ${x.done ? 'done' : ''} ${state.justToggled === x.id ? 'arrive' : ''}" data-id="${x.id}">
     <button class="check ${x.done ? 'on' : ''}" data-a="toggletodo" data-id="${x.id}" aria-label="${x.done ? 'Als offen markieren' : 'Erledigen'}"><svg viewBox="0 0 24 24"><path d="M6.5 12.5l3.8 3.8 7.2-8"/></svg></button>
-    <button class="main" data-a="edittodo" data-id="${x.id}"><span class="title">${esc(x.title)}</span>${sub}${listTag(x)}</button>
+    <button class="main" data-a="edittodo" data-id="${x.id}"><span class="title">${esc(x.title)}</span>${sub}${listTag(x)}${x.note ? `<span class="sub tnote">${esc(x.note)}</span>` : ''}</button>
     <span class="prio ${x.priority}">${PRIO_LABEL[x.priority]}</span></li>`;
 }
 
@@ -1332,6 +1332,8 @@ function fieldHTML(f) {
     input = `<select name="${f.name}" ${req}>${f.options
       .map(([val, label]) => `<option value="${esc(val)}" ${String(f.value ?? '') === String(val) ? 'selected' : ''}>${esc(label)}</option>`)
       .join('')}</select>`;
+  } else if (f.type === 'textarea') {
+    input = `<textarea name="${f.name}" rows="4" ${req} ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ''}>${v}</textarea>`;
   } else {
     input = `<input name="${f.name}" type="${f.type || 'text'}" value="${v}" ${req} ${f.inputmode ? `inputmode="${f.inputmode}"` : ''} ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ''} autocomplete="off">`;
   }
@@ -1534,6 +1536,7 @@ function todoForm(td) {
         ? [{ name: 'list_id', label: 'Liste', type: 'select', value: (td ? listOf(td)?.id : state.todoLists.find((l) => l.id === state.listFilter)?.id) || '', options: [['', 'Keine Liste'], ...state.todoLists.map((l) => [l.id, l.name])] }]
         : []),
       { name: 'due_time', label: 'Uhrzeit (optional)', type: 'time', value: td?.due_time?.slice(0, 5) },
+      { name: 'note', label: 'Notiz (optional)', type: 'textarea', value: td?.note, placeholder: 'Details, Links, woran du denken willst …' },
     ],
     onSave: (v) => {
       // Eine Uhrzeit ohne Datum hat keinen Bezugstag, deshalb gilt sie für heute.
