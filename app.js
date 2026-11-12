@@ -879,7 +879,7 @@ function viewFinBookings() {
 
   // Umbuchungen haben keine Kategorie und erscheinen nur ohne Kategorie-Filter.
   const all = inAcc.filter((x) => (x.type === 'umbuchung' ? state.catFilter === 'alle' : state.catFilter === 'alle' || (state.catFilter === NO_CAT ? !x.category : x.category === state.catFilter)));
-  const byDate = (a, b) => a.date.localeCompare(b.date) || (a.created_at || '').localeCompare(b.created_at || '');
+  const byDate = (a, b) => b.date.localeCompare(a.date) || (b.created_at || '').localeCompare(a.created_at || '');
   const incomes = all.filter((x) => x.type === 'einnahme').sort(byDate);
   const expenses = all.filter((x) => x.type === 'ausgabe').sort(byDate);
   const transfers = all.filter((x) => x.type === 'umbuchung').sort(byDate);
