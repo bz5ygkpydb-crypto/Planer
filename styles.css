@@ -628,3 +628,11 @@ details summary { font-weight: 700; cursor: pointer; padding: 4px 0; }
 
 .budget-chips.two { grid-template-columns: 1fr 1fr; }
 .budget-chips.two b { font-size: 16px; }
+
+/* To-Do-Listen */
+.calchip small { opacity: 0.65; font-weight: 700; margin-left: 2px; }
+.listbar { display: flex; justify-content: space-between; align-items: center; margin: -2px 2px 8px; font-weight: 700; }
+.listbar span { display: inline-flex; align-items: center; gap: 8px; }
+.listbar i, .ltag i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.listbar .linkbtn { padding: 0; font-size: 14px; }
+.ltag { display: flex !important; align-items: center; gap: 6px; }
