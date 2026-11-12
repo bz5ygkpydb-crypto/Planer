@@ -129,6 +129,8 @@ const state = {
   accTx: [],
   finView: 'uebersicht',
   debts: [],
+  todoLists: [],
+  listFilter: 'alle',
   accDetail: null,
   accSeg: 'alle',
   lastAcc: null,
@@ -349,6 +351,9 @@ async function loadHist() {
   const now = new Date();
   state.hist = await db.list('transactions', { col: 'date', from: iso(addMonths(monthStart(now), -5)), to: iso(monthEnd(now)) });
 }
+async function loadTodoLists() {
+  state.todoLists = (await db.list('todo_lists')).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+}
 async function loadDebts() {
   state.debts = await db.list('debts');
 }
@@ -405,7 +410,7 @@ async function loadSettings() {
 
 async function refresh() {
   try {
-    await Promise.all([loadEvents(), loadAgenda(), loadCalendars(), loadTodos(), loadTx(), loadHist(), loadAccounts(), loadRecurring(), loadDebts(), loadSettings(), loadInvites()]);
+    await Promise.all([loadEvents(), loadAgenda(), loadCalendars(), loadTodos(), loadTx(), loadHist(), loadAccounts(), loadRecurring(), loadDebts(), loadTodoLists(), loadSettings(), loadInvites()]);
     if (await applyConfigRenames()) await Promise.all([loadTx(), loadHist(), loadRecurring()]);
     await loadAccountTx();
     state.error = null;
@@ -549,6 +554,11 @@ function evHtml(e, ctx, cm) {
 const PRIO_ORDER = { hoch: 0, mittel: 1, niedrig: 2 };
 const PRIO_LABEL = { hoch: 'Hoch', mittel: 'Mittel', niedrig: 'Niedrig' };
 
+const listOf = (x) => state.todoLists.find((l) => l.id === x.list_id);
+function listTag(x) {
+  const l = listOf(x);
+  return l && state.listFilter === 'alle' ? `<span class="sub ltag"><i style="background:${safeColor(l.color)}"></i>${esc(l.name)}</span>` : '';
+}
 function todoRow(x) {
   const t = today();
   const time = x.due_time ? x.due_time.slice(0, 5) : '';
@@ -557,7 +567,7 @@ function todoRow(x) {
   const sub = when ? `<span class="sub ${overdue ? 'overdue' : ''}">${overdue ? 'Überfällig · ' : ''}${when}</span>` : '';
   return `<li class="row trow ${x.done ? 'done' : ''} ${state.justToggled === x.id ? 'arrive' : ''}" data-id="${x.id}">
     <button class="check ${x.done ? 'on' : ''}" data-a="toggletodo" data-id="${x.id}" aria-label="${x.done ? 'Als offen markieren' : 'Erledigen'}"><svg viewBox="0 0 24 24"><path d="M6.5 12.5l3.8 3.8 7.2-8"/></svg></button>
-    <button class="main" data-a="edittodo" data-id="${x.id}"><span class="title">${esc(x.title)}</span>${sub}</button>
+    <button class="main" data-a="edittodo" data-id="${x.id}"><span class="title">${esc(x.title)}</span>${sub}${listTag(x)}</button>
     <span class="prio ${x.priority}">${PRIO_LABEL[x.priority]}</span></li>`;
 }
 
@@ -733,7 +743,9 @@ function viewTodos() {
   const t = today();
   const tom = addDaysISO(1);
   const week = addDaysISO(6);
-  const filt = (x) => state.prioFilter === 'alle' || x.priority === state.prioFilter;
+  if (state.listFilter !== 'alle' && state.listFilter !== 'none' && !state.todoLists.some((l) => l.id === state.listFilter)) state.listFilter = 'alle';
+  const inList = (x) => state.listFilter === 'alle' || (state.listFilter === 'none' ? !listOf(x) : x.list_id === state.listFilter);
+  const filt = (x) => (state.prioFilter === 'alle' || x.priority === state.prioFilter) && inList(x);
   const openAll = state.todos.filter((x) => !x.done);
   const doneAll = state.todos.filter((x) => x.done);
   const sorter = (a, b) =>
@@ -762,7 +774,7 @@ function viewTodos() {
   const bumped = state.justToggled && doneAll.some((x) => x.id === state.justToggled);
   const doneCard = doneAll.length
     ? `<section class="card donecard"><button class="donehead" data-a="toggledone" aria-expanded="${state.showDone}"><span>Erledigt</span><span class="count ${bumped ? 'bump' : ''}">${doneAll.length}</span><span class="chev ${state.showDone ? 'open' : ''}">›</span></button>
-        <div class="donebody ${state.showDone ? 'open' : ''}"><div>${done.length ? `<ul class="list">${done.map(todoRow).join('')}</ul>` : '<p class="empty">Keine erledigten To-Dos in dieser Priorität.</p>'}
+        <div class="donebody ${state.showDone ? 'open' : ''}"><div>${done.length ? `<ul class="list">${done.map(todoRow).join('')}</ul>` : '<p class="empty">Keine erledigten To-Dos mit diesem Filter.</p>'}
         <button class="btn small danger clear" data-a="cleardone">Erledigte löschen</button></div></div></section>`
     : '';
 
@@ -771,10 +783,17 @@ function viewTodos() {
   const ring = `<div class="ring" title="${doneAll.length} von ${total} erledigt"><svg viewBox="0 0 46 46"><circle class="bg" cx="23" cy="23" r="20"/><circle class="fg" cx="23" cy="23" r="20" style="stroke-dashoffset:${(125.7 * (1 - ratio)).toFixed(1)}"/></svg><b>${Math.round(ratio * 100)}%</b></div>`;
   const opt = (v, l) => `<option value="${v}" ${state.prioFilter === v ? 'selected' : ''}>${l}</option>`;
   const empty = !open.length
-    ? `<section class="card empty-card"><span class="emoji">${openAll.length ? '🔎' : '🎉'}</span><b>${openAll.length ? 'Nichts in dieser Priorität' : 'Alles erledigt'}</b><p>${openAll.length ? 'Wähle oben eine andere Priorität.' : 'Du hast keine offenen To-Dos.'}</p></section>`
+    ? `<section class="card empty-card"><span class="emoji">${openAll.length ? '🔎' : '🎉'}</span><b>${openAll.length ? 'Nichts mit diesem Filter' : 'Alles erledigt'}</b><p>${openAll.length ? 'Wähle oben eine andere Liste oder Priorität.' : 'Du hast keine offenen To-Dos.'}</p></section>`
     : '';
 
+  const cnt = (id) => openAll.filter((x) => (id === 'alle' ? true : id === 'none' ? !listOf(x) : x.list_id === id)).length;
+  const chip = (id, label, color) => `<button class="calchip ${state.listFilter === id ? 'sel' : ''}" data-a="todolist" data-id="${id}" aria-pressed="${state.listFilter === id}">${color ? `<i style="background:${safeColor(color)}"></i>` : ''}${esc(label)} <small>${cnt(id)}</small></button>`;
+  const listChips = `<div class="calchips">${chip('alle', 'Alle')}${state.todoLists.map((l) => chip(l.id, l.name, l.color)).join('')}${state.todoLists.length && openAll.some((x) => !listOf(x)) ? chip('none', 'Ohne Liste') : ''}<button class="calchip add" data-a="addlist">+ Liste</button></div>`;
+  const curList = state.todoLists.find((l) => l.id === state.listFilter);
+  const listBar = curList ? `<div class="listbar"><span><i style="background:${safeColor(curList.color)}"></i>${esc(curList.name)}</span><button class="linkbtn" data-a="editlist" data-id="${curList.id}">Liste bearbeiten</button></div>` : '';
+
   return `${head('To-Dos', `${openAll.length} offen · ${doneAll.length} erledigt`, total ? ring : '')}
+    ${listChips}${listBar}
     <div class="toolbar"><label>Priorität <select data-c="priofilter">${opt('alle', 'Alle')}${opt('hoch', 'Hoch')}${opt('mittel', 'Mittel')}${opt('niedrig', 'Niedrig')}</select></label></div>
     ${sections || empty}${doneCard}`;
 }
@@ -1477,6 +1496,31 @@ function eventForm(ev) {
   });
 }
 
+function listForm(list) {
+  const used = new Set(state.todoLists.map((l) => l.color));
+  const nextColor = (CAL_COLORS.find(([c]) => !used.has(c)) || CAL_COLORS[0])[0];
+  openSheet({
+    title: list ? 'Liste bearbeiten' : 'Neue Liste',
+    text: list ? 'Beim Löschen bleiben die To-Dos erhalten, sie gehören dann zu keiner Liste mehr.' : 'Zum Beispiel Uni, Privat, Arbeit oder Wichtig.',
+    fields: [
+      { name: 'name', label: 'Bezeichnung', required: true, value: list?.name, placeholder: 'z. B. Uni, Wichtig, Freizeit' },
+      { name: 'color', label: 'Farbe', type: 'select', value: list?.color || nextColor, options: CAL_COLORS },
+    ],
+    onSave: (v) =>
+      run(async () => {
+        if (list) await db.update('todo_lists', list.id, v);
+        else state.listFilter = (await db.insert('todo_lists', v)).id;
+      }, 'Gespeichert'),
+    onDelete:
+      list &&
+      (() =>
+        run(async () => {
+          await db.remove('todo_lists', list.id);
+          if (state.listFilter === list.id) state.listFilter = 'alle';
+        }, 'Gelöscht')),
+  });
+}
+
 function todoForm(td) {
   openSheet({
     title: td ? 'To-Do bearbeiten' : 'Neues To-Do',
@@ -1486,6 +1530,9 @@ function todoForm(td) {
         { name: 'priority', label: 'Priorität', type: 'select', value: td?.priority || 'mittel', options: Object.entries(PRIO_LABEL) },
         { name: 'due_date', label: 'Fällig am', type: 'date', value: td?.due_date },
       ],
+      ...(state.todoLists.length
+        ? [{ name: 'list_id', label: 'Liste', type: 'select', value: (td ? listOf(td)?.id : state.todoLists.find((l) => l.id === state.listFilter)?.id) || '', options: [['', 'Keine Liste'], ...state.todoLists.map((l) => [l.id, l.name])] }]
+        : []),
       { name: 'due_time', label: 'Uhrzeit (optional)', type: 'time', value: td?.due_time?.slice(0, 5) },
     ],
     onSave: (v) => {
@@ -2063,6 +2110,12 @@ const actions = {
     }
   },
   addevent: () => eventForm(),
+  todolist: (el) => {
+    state.listFilter = el.dataset.id;
+    render();
+  },
+  addlist: () => listForm(),
+  editlist: (el) => listForm(state.todoLists.find((l) => l.id === el.dataset.id)),
   selday: (el) => {
     state.selDate = el.dataset.date;
     state.openEv = null;
