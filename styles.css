@@ -512,3 +512,79 @@ details summary { font-weight: 700; cursor: pointer; padding: 4px 0; }
 .tile:active { transform: scale(0.97); }
 .dayhead .btn { flex: none; white-space: nowrap; }
 .dayhead > div:nth-child(2) { min-width: 0; }
+
+/* ---------- Finanzen: Budget, Konto-Karten, Schulden ---------- */
+.budget {
+  position: relative; overflow: hidden; border-radius: 26px; padding: 20px 20px 18px; margin-bottom: 14px; color: #fff;
+  background: var(--grad); box-shadow: 0 18px 40px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.budget::before { content: ""; position: absolute; width: 200px; height: 200px; border-radius: 50%; right: -60px; top: -80px; background: rgba(255, 255, 255, 0.14); }
+.budget > * { position: relative; }
+.budget .hero-k { opacity: 0.85; }
+.budget-n { font-size: 40px; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; margin: 4px 0 12px; }
+.budget-lines { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.25); }
+.budget-lines div { display: flex; justify-content: space-between; font-size: 14px; }
+.budget-lines span { opacity: 0.85; }
+.budget-lines b { font-variant-numeric: tabular-nums; }
+.budget-foot { margin-top: 10px; font-size: 13px; opacity: 0.8; }
+
+.acards { display: flex; gap: 12px; overflow-x: auto; margin: 0 -16px 14px; padding: 4px 16px 10px; scroll-snap-type: x mandatory; scroll-padding: 0 16px; scrollbar-width: none; }
+.acards::-webkit-scrollbar { display: none; }
+.acard {
+  flex: 0 0 78%; max-width: 300px; min-height: 150px; scroll-snap-align: start; position: relative; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: space-between; gap: 10px; text-align: left; border: 0; border-radius: 22px; padding: 16px 18px; color: #fff;
+  box-shadow: 0 14px 30px rgba(17, 19, 40, 0.2); transition: transform 0.25s var(--spring);
+}
+.acard:active { transform: scale(0.97); }
+.acard::after { content: ""; position: absolute; width: 150px; height: 150px; border-radius: 50%; right: -40px; bottom: -70px; background: rgba(255, 255, 255, 0.1); pointer-events: none; }
+.acard > * { position: relative; z-index: 1; }
+.acard.big { flex: none; max-width: none; width: 100%; margin-bottom: 14px; min-height: 160px; }
+.acard-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.acard-kind { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.8; text-align: right; }
+.acard-bal { font-size: 30px; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.acard-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; opacity: 0.9; font-weight: 600; }
+.acard-warn { background: rgba(255, 255, 255, 0.25); padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.acard.add { background: var(--soft); color: var(--muted); border: 1.5px dashed var(--line); box-shadow: none; align-items: center; justify-content: center; font-weight: 700; flex-basis: 46%; }
+.acard.add::after { display: none; }
+.acard.add .plus { font-size: 30px; line-height: 1; }
+
+.logo { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; }
+.lg-sq { font-style: normal; display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 4px; border-radius: 8px; border: 2px solid currentColor; font-size: 13px; letter-spacing: 0.02em; }
+.lg-pill { font-style: normal; background: #fff; border-radius: 10px; padding: 4px 11px; font-size: 16px; letter-spacing: 0.02em; }
+.lg-adv { font-size: 19px; letter-spacing: -0.04em; text-transform: lowercase; }
+.logo em { font-style: normal; font-size: 10px; letter-spacing: 0.14em; color: #f4c95d; border: 1px solid #f4c95d; border-radius: 5px; padding: 1px 5px; }
+
+.b-ing { background: linear-gradient(135deg, #ff7a1a, #ff5200); }
+.b-ing .lg-pill { color: #ff6200; }
+.b-adv { background: linear-gradient(135deg, #123a7a, #0a1f45); }
+.b-tr { background: linear-gradient(135deg, #2a2a2e, #050507); }
+.b-haspa { background: linear-gradient(135deg, #f0202e, #b80016); }
+.b-haspa .lg-pill { color: #d4001a; }
+.b-def { background: var(--grad); }
+
+.idle { margin: 0 0 14px; }
+.idle summary { color: var(--muted); font-size: 14px; font-weight: 600; padding: 4px 0; }
+.card .idle { margin: 10px 0 0; }
+
+.backrow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.dayh { list-style: none; padding: 14px 0 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border-top: 1px solid var(--line); }
+.dayh:first-child { border-top: 0; padding-top: 0; }
+.dot { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; font-weight: 800; }
+.dot.in { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.dot.out { background: var(--soft); color: var(--muted); }
+.bookings .row { border-top: 0; }
+.bookings .dayh + .row { padding-top: 6px; }
+
+/* Startseite: Geld-Karte */
+.moneytop { display: block; width: 100%; text-align: left; background: var(--accent-soft); border: 0; border-radius: 18px; padding: 14px 16px; margin-bottom: 10px; }
+.moneytop span { display: block; font-size: 13px; color: var(--muted); font-weight: 600; }
+.moneytop b { display: block; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.moneytop small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.minicards { display: flex; gap: 8px; overflow-x: auto; margin: 0 -4px; padding: 2px 4px; scrollbar-width: none; }
+.minicards::-webkit-scrollbar { display: none; }
+.mini { flex: 1 0 auto; min-width: 104px; border: 0; border-radius: 14px; padding: 10px 12px; text-align: left; color: #fff; display: flex; flex-direction: column; gap: 2px; }
+.mini span { font-size: 12px; font-weight: 600; opacity: 0.9; white-space: nowrap; }
+.mini b { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.row.debt .sub { white-space: normal; }
+.row.debt.done .title { text-decoration: line-through; color: var(--muted); }
