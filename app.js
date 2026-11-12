@@ -639,7 +639,7 @@ function viewToday() {
     ${shown('h:geld') ? `<section class="card"><h2>Geld</h2>
       ${
         state.accounts.some((a) => a.active)
-          ? `<button class="moneytop" data-a="gofin"><span>Frei verfügbar</span><b class="${bud.free < 0 ? 'c-red' : ''}">${eur.format(bud.free)}</b><small>Konten ${eur.format(bud.cash)}${bud.debt ? ` · Schulden −${eur.format(bud.debt)}` : ''}${bud.fixed > 0 ? ` · Fixkosten −${eur.format(bud.fixed)}` : ''}</small></button>
+          ? `<button class="moneytop" data-a="gofin"><span>Frei verfügbar</span><b class="${bud.free < 0 ? 'c-red' : ''}">${eur.format(bud.free)}</b><small>Konten ${eur.format(bud.cash)}${bud.debt ? ` · Schulden −${eur.format(bud.debt)}` : ''} · Übrig nach Fixkosten ${eur.format(bud.left)}</small></button>
              <div class="minicards">${state.accounts
                .filter((a) => a.active)
                .map((a) => `<button class="mini ${brandOf(a).cls}" data-a="gofin" data-id="${a.id}"><span>${esc(a.name)}</span><b>${eur.format(bals.get(a.id).value)}</b></button>`)
@@ -866,19 +866,19 @@ function accountsRow() {
     ${idle.length ? `<details class="idle"><summary>Nicht genutzte Konten (${idle.length})</summary><ul class="list">${idleRows}</ul></details>` : ''}`;
 }
 
-// Budget: Geld auf den Konten (ohne Anlagen), abzüglich offener Schulden und der Fixkosten, die bis Monatsende noch fällig sind.
+// Budget: "Frei verfügbar" ist das noch freie Kreditlimit der Kreditkarte (Advanzia), mit der du bezahlst.
+// Die Kacheln zeigen alle Konten zusammen, die offenen Schulden, die Fixkosten des Monats und was nach Fixkosten und Einnahmen übrig bleibt.
 function budgetNow() {
   const bals = balancesNow();
   const act = state.accounts.filter((a) => a.active);
-  const cash = act.filter((a) => a.kind !== 'anlage').reduce((s, a) => s + bals.get(a.id).value, 0);
-  const invest = act.filter((a) => a.kind === 'anlage').reduce((s, a) => s + bals.get(a.id).value, 0);
+  const cash = act.reduce((s, a) => s + bals.get(a.id).value, 0);
+  const cards = act.filter((a) => a.kind === 'kredit');
+  const free = cards.reduce((s, a) => s + (Number(a.credit_limit) || 0) + bals.get(a.id).value, 0);
   const openDebts = state.debts.filter((d) => !d.paid);
   const debt = openDebts.reduce((s, d) => s + Number(d.amount), 0);
-  const t = today();
-  const end = iso(monthEnd(new Date()));
-  const rest = upcomingRecurring(32).filter((x) => x.date > t && x.date <= end);
-  const fixed = sumOf(rest, 'ausgabe') - sumOf(rest, 'einnahme');
-  return { cash, invest, debt, debtCount: openDebts.length, fixed, free: cash - debt - fixed };
+  const cur = monthStart(new Date());
+  const fig = monthFigures(cur, state.hist.filter((x) => x.date >= iso(cur) && x.date <= iso(monthEnd(cur))));
+  return { cash, free, cardName: cards[0]?.name || '', hasLimit: cards.some((a) => Number(a.credit_limit) > 0), debt, debtCount: openDebts.length, fixExp: fig.fixExp, left: fig.saldo };
 }
 
 function budgetHero() {
@@ -889,11 +889,13 @@ function budgetHero() {
   const chip = (label, v, sign) => `<div><span>${label}</span><b>${sign}${eur0.format(Math.abs(v))}</b></div>`;
   return `<section class="budget"><div class="hero-k">Frei verfügbar</div>
     <div class="budget-n">${eur.format(b.free)}</div>
-    <div class="budget-chips">
-      ${chip('Konten', b.cash, b.cash < 0 ? '−' : '')}
+    <div class="budget-sub">${b.hasLimit ? `Noch freies Limit · ${esc(b.cardName)}` : 'Lege bei deiner Kreditkarte ein Kreditlimit fest'}</div>
+    <div class="budget-chips two">
+      ${chip('Konten gesamt', b.cash, b.cash < 0 ? '−' : '+')}
       ${chip(`Schulden${b.debtCount ? ` (${b.debtCount})` : ''}`, b.debt, '−')}
-      ${chip('Fixkosten', b.fixed, b.fixed > 0 ? '−' : '+')}
-    </div>${b.invest ? `<div class="budget-foot">Dazu Anlagen: ${eur.format(b.invest)}</div>` : ''}</section>`;
+      ${chip('Fixkosten im Monat', b.fixExp, '−')}
+      ${chip('Übrig nach Fixkosten', b.left, b.left < 0 ? '−' : '+')}
+    </div></section>`;
 }
 
 function debtsCard() {
