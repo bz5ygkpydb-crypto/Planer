@@ -954,26 +954,30 @@ function viewAccountDetail() {
   const br = brandOf(a);
   const t = today();
   const month = [...state.tx, ...recurringFor(state.finMonth)].filter((x) => x.account_id === a.id || x.to_account_id === a.id);
-  const net = (x) => (x.type === 'umbuchung' ? (x.to_account_id === a.id ? 1 : -1) * Number(x.amount) : x.type === 'einnahme' ? Number(x.amount) : -Number(x.amount));
-  const inc = month.filter((x) => net(x) > 0).reduce((s, x) => s + net(x), 0);
-  const out = month.filter((x) => net(x) < 0).reduce((s, x) => s - net(x), 0);
+  // Richtung nach Art der Buchung, nicht nach dem Betrag: Auch eine Buchung über 0 € gehört zu Einnahmen oder Ausgaben.
+  const dir = (x) => (x.type === 'umbuchung' ? (x.to_account_id === a.id ? 1 : -1) : x.type === 'einnahme' ? 1 : -1);
+  const net = (x) => dir(x) * Number(x.amount);
+  const inc = month.filter((x) => dir(x) > 0).reduce((s, x) => s + net(x), 0);
+  const out = month.filter((x) => dir(x) < 0).reduce((s, x) => s - net(x), 0);
   const seg = state.accSeg;
   const shown = month
-    .filter((x) => seg === 'alle' || (seg === 'ein' ? net(x) > 0 : net(x) < 0))
+    .filter((x) => seg === 'alle' || (seg === 'ein' ? dir(x) > 0 : dir(x) < 0))
     .sort((p, q) => q.date.localeCompare(p.date) || (q.created_at || '').localeCompare(p.created_at || ''));
   const row = (x) => {
     const v = net(x);
+    const up = dir(x) > 0;
     const transfer = x.type === 'umbuchung';
     const title = transfer ? x.merchant || 'Umbuchung' : x.merchant || x.note || x.category || (x.type === 'einnahme' ? 'Einnahme' : 'Ausgabe');
     const sub = [
       transfer ? `${accName(x.account_id) || '?'} → ${accName(x.to_account_id) || '?'}` : x.category || (x.type === 'ausgabe' && !x.recurringId ? 'Kategorie wählen' : ''),
       x.source === 'apple_pay' ? 'Apple Pay' : '',
       x.recurringId ? (x.date > t ? 'geplant' : 'fest') : '',
+      !x.recurringId && Number(x.amount) === 0 ? 'Betrag fehlt, antippen' : '',
     ].filter(Boolean).join(' · ');
     const target = x.recurringId ? `data-a="editrec" data-id="${x.recurringId}"` : `data-a="edittx" data-id="${x.id}"`;
-    return `<li class="row"><span class="dot ${v > 0 ? 'in' : 'out'}">${transfer ? '⇄' : v > 0 ? '↓' : '↑'}</span>
+    return `<li class="row"><span class="dot ${up ? 'in' : 'out'}">${transfer ? '⇄' : up ? '↓' : '↑'}</span>
       <button class="main" ${target}><span class="title">${esc(title)}</span><span class="sub">${esc(sub)}</span></button>
-      <span class="amount ${v > 0 ? 'pos' : 'neg'}">${v > 0 ? '+' : '−'}${eur.format(Math.abs(v))}</span></li>`;
+      <span class="amount ${up ? 'pos' : 'neg'}">${up ? '+' : '−'}${eur.format(Math.abs(v))}</span></li>`;
   };
   let lastDay = '';
   const groups = shown
