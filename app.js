@@ -130,6 +130,10 @@ const state = {
   finView: 'uebersicht',
   debts: [],
   todoLists: [],
+  jobs: [],
+  jobSeg: 'neu',
+  jobLimit: 40,
+  jobFilter: { country: 'alle', city: 'alle', type: 'alle', area: 'alle', fit: 'alle' },
   listFilter: 'alle',
   accDetail: null,
   accSeg: 'alle',
@@ -412,7 +416,7 @@ async function loadSettings() {
 
 async function refresh() {
   try {
-    await Promise.all([loadEvents(), loadAgenda(), loadCalendars(), loadTodos(), loadTx(), loadHist(), loadAccounts(), loadRecurring(), loadDebts(), loadTodoLists(), loadSettings(), loadInvites()]);
+    await Promise.all([loadEvents(), loadAgenda(), loadCalendars(), loadTodos(), loadTx(), loadHist(), loadAccounts(), loadRecurring(), loadDebts(), loadTodoLists(), loadJobs(), loadSettings(), loadInvites()]);
     if (await applyConfigRenames()) await Promise.all([loadTx(), loadHist(), loadRecurring()]);
     await loadAccountTx();
     state.error = null;
@@ -445,6 +449,7 @@ const ICONS = {
   kalender: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   todos: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.3l2.6 2.6 4.8-5.3"/></svg>',
   finanzen: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="3.5"/><path d="M3 10.5h18M15.5 15h2"/></svg>',
+  jobs: '<svg viewBox="0 0 24 24"><rect x="3" y="7.5" width="18" height="12" rx="3"/><path d="M9 7.5V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1.5M3 12.5h18"/></svg>',
   mehr: '<svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/></svg>',
 };
 const shown = (id) => !state.hiddenUI.has(id);
@@ -453,12 +458,14 @@ const TABS = [
   ['kalender', 'Kalender'],
   ['todos', 'To-Dos'],
   ['finanzen', 'Finanzen'],
+  ['jobs', 'Jobs'],
   ['mehr', 'Mehr'],
 ];
 const FAB_ITEMS = [
   ['event', 'Termin', ICONS.kalender],
   ['todo', 'To-Do', ICONS.todos],
   ['tx', 'Buchung', ICONS.finanzen],
+  ['job', 'Stelle', ICONS.jobs],
 ];
 
 // Leiste und Schnell-Hinzufügen bleiben dauerhaft stehen (nur ihr Zustand wird aktualisiert),
@@ -1211,11 +1218,135 @@ function viewFin() {
   return `${finHead()}${body}`;
 }
 
+// ---------- Bewerbungstracker ----------
+const JOB_STATUS = ['Neu', 'Interessant', 'Kontakt aufgenommen', 'Beworben', 'Interview', 'Angebot', 'Absage', 'Abgelaufen'];
+const JOB_GROUPS = {
+  neu: ['Neu', 'Interessant'],
+  pipeline: ['Kontakt aufgenommen', 'Beworben', 'Interview'],
+  archiv: ['Angebot', 'Absage', 'Abgelaufen'],
+};
+const JOB_TYPES = ['Praktikum', 'Summer Analyst', 'Graduate / Trainee', 'Junior', 'Werkstudent', 'Erfahren (Stretch)'];
+const JOB_FITS = ['Top', 'Gut', 'Mittel', 'Stretch'];
+const COUNTRY_LABEL = { CH: 'Schweiz', DE: 'Deutschland', andere: 'Andere' };
+const FIT_RANK = { Top: 0, Gut: 1, Mittel: 2, Stretch: 3 };
+
+async function loadJobs() {
+  state.jobs = await db.list('jobs');
+}
+
+function jobMatches(j) {
+  const f = state.jobFilter;
+  return (
+    (f.country === 'alle' || j.country === f.country) &&
+    (f.city === 'alle' || j.city === f.city) &&
+    (f.type === 'alle' || j.job_type === f.type) &&
+    (f.area === 'alle' || (j.areas || []).includes(f.area)) &&
+    (f.fit === 'alle' || j.fit === f.fit)
+  );
+}
+
+function jobCard(j) {
+  const t = today();
+  const dl = j.deadline ? dayDiff(t, j.deadline) : null;
+  const dlText = dl === null ? '' : dl < 0 ? `Frist vorbei (${shortDate(j.deadline)})` : dl === 0 ? 'Frist heute' : dl <= 7 ? `Frist in ${dl} Tg.` : `Frist ${shortDate(j.deadline)}`;
+  const place = [j.company, j.city || j.location].filter(Boolean).join(' · ');
+  const chips = [
+    j.fit ? `<span class="jchip fit-${esc(j.fit)}">${esc(j.fit)}</span>` : '',
+    j.job_type ? `<span class="jchip">${esc(j.job_type)}</span>` : '',
+    state.jobSeg === 'alle' ? `<span class="jchip st">${esc(j.status)}</span>` : '',
+    dlText ? `<span class="jchip ${dl !== null && dl >= 0 && dl <= 7 ? 'warn' : ''}">${esc(dlText)}</span>` : '',
+  ].join('');
+  const opts = JOB_STATUS.map((s) => `<option ${s === j.status ? 'selected' : ''}>${s}</option>`).join('');
+  return `<li class="job"><button class="jobmain" data-a="editjob" data-id="${j.id}"><span class="jtitle">${esc(j.title)}</span><span class="jsub">${esc(place)}</span><span class="jchips">${chips}</span></button>
+    <div class="jobact"><select class="jstatus" data-c="jobstatus" data-id="${j.id}" aria-label="Status">${opts}</select>${j.link ? `<a class="jlink" href="${esc(j.link)}" target="_blank" rel="noopener">Stelle öffnen ↗</a>` : ''}</div></li>`;
+}
+
+function viewJobs() {
+  const t = today();
+  const all = state.jobs;
+  const inGroup = (g) => all.filter((j) => JOB_GROUPS[g].includes(j.status));
+  const soon = all.filter((j) => JOB_GROUPS.neu.concat(JOB_GROUPS.pipeline).includes(j.status) && j.deadline && dayDiff(t, j.deadline) >= 0 && dayDiff(t, j.deadline) <= 7).length;
+  const parts = [];
+
+  if (shown('j:stats')) {
+    parts.push(`<div class="tiles jtiles">
+      <button class="tile" data-a="jobseg" data-v="neu"><b>${inGroup('neu').length}</b><span>Neu</span></button>
+      <button class="tile" data-a="jobseg" data-v="pipeline"><b>${inGroup('pipeline').length}</b><span>In Bearbeitung</span></button>
+      <button class="tile"><b class="${soon ? 'c-red' : ''}">${soon}</b><span>Frist ≤ 7 Tage</span></button>
+    </div>`);
+  }
+
+  const segBtn = ([id, label, n]) => `<button class="${state.jobSeg === id ? 'on' : ''}" data-a="jobseg" data-v="${id}" aria-pressed="${state.jobSeg === id}">${label} <small>${n}</small></button>`;
+  parts.push(`<div class="seg" role="group" aria-label="Ansicht">${[['neu', 'Neu', inGroup('neu').length], ['pipeline', 'Aktiv', inGroup('pipeline').length], ['archiv', 'Archiv', inGroup('archiv').length], ['alle', 'Alle', all.length]].map(segBtn).join('')}</div>`);
+
+  if (shown('j:filter')) {
+    const f = state.jobFilter;
+    const countries = [...new Set(all.map((j) => j.country).filter(Boolean))];
+    const cities = [...new Set(all.filter((j) => f.country === 'alle' || j.country === f.country).map((j) => j.city).filter(Boolean))].sort();
+    const types = JOB_TYPES.filter((x) => all.some((j) => j.job_type === x));
+    const areas = [...new Set(all.flatMap((j) => j.areas || []))].sort();
+    const sel = (key, label, list, fmt = (x) => x) =>
+      `<select class="filtersel" data-c="jobfilter" data-k="${key}" aria-label="${label}"><option value="alle">${label}: alle</option>${list.map((v) => `<option value="${esc(v)}" ${f[key] === v ? 'selected' : ''}>${esc(fmt(v))}</option>`).join('')}</select>`;
+    parts.push(`<div class="jobfilters">${sel('country', 'Land', countries, (c) => COUNTRY_LABEL[c] || c)}${sel('city', 'Stadt', cities)}${sel('type', 'Art', types)}${sel('area', 'Bereich', areas)}${sel('fit', 'Fit', JOB_FITS)}</div>`);
+  }
+
+  const groupList = state.jobSeg === 'alle' ? all : inGroup(state.jobSeg);
+  const list = groupList
+    .filter(jobMatches)
+    .sort((a, b) => (FIT_RANK[a.fit] ?? 9) - (FIT_RANK[b.fit] ?? 9) || (a.deadline || '9999').localeCompare(b.deadline || '9999') || (b.found_on || '').localeCompare(a.found_on || ''));
+  const visible = list.slice(0, state.jobLimit);
+  parts.push(
+    list.length
+      ? `<ul class="joblist">${visible.map(jobCard).join('')}</ul>${list.length > visible.length ? `<button class="btn block" data-a="jobmore">Mehr anzeigen (${list.length - visible.length})</button>` : ''}`
+      : `<section class="card empty-card"><span class="emoji">${all.length ? '🔎' : '💼'}</span><b>${all.length ? 'Keine Stellen mit diesem Filter' : 'Noch keine Stellen'}</b><p>${all.length ? 'Ändere oben den Filter.' : 'Hier erscheinen die täglich gefundenen Finance-Stellen.'}</p></section>`,
+  );
+  return `${head('Bewerbungen', `${all.length} Stellen · ${list.length} in dieser Ansicht`)}${parts.join('')}`;
+}
+
+function jobForm(job) {
+  const j = job || {};
+  openSheet({
+    title: job ? 'Stelle bearbeiten' : 'Neue Stelle',
+    fields: [
+      { name: 'title', label: 'Stelle', required: true, value: j.title },
+      { name: 'company', label: 'Firma', value: j.company },
+      [
+        { name: 'country', label: 'Land', type: 'select', value: j.country || 'CH', options: Object.entries(COUNTRY_LABEL) },
+        { name: 'city', label: 'Stadt', value: j.city, placeholder: 'z. B. Zug, Hamburg' },
+      ],
+      [
+        { name: 'job_type', label: 'Art', type: 'select', value: j.job_type || '', options: [['', '–'], ...JOB_TYPES.map((x) => [x, x])] },
+        { name: 'fit', label: 'Fit', type: 'select', value: j.fit || '', options: [['', '–'], ...JOB_FITS.map((x) => [x, x])] },
+      ],
+      { name: 'status', label: 'Status', type: 'select', value: j.status || 'Neu', options: JOB_STATUS.map((x) => [x, x]) },
+      [
+        { name: 'deadline', label: 'Frist', type: 'date', value: j.deadline },
+        { name: 'start_text', label: 'Start', value: j.start_text, placeholder: 'z. B. ab 09/2027' },
+      ],
+      { name: 'link', label: 'Link zur Stelle', type: 'url', value: j.link },
+      { name: 'areas', label: 'Bereiche (mit Komma getrennt)', value: (j.areas || []).join(', '), placeholder: 'M&A / Transaction, Corporate Finance' },
+      { name: 'contact_person', label: 'Ansprechperson', value: j.contact_person },
+      [
+        { name: 'contact_email', label: 'E-Mail', type: 'email', value: j.contact_email },
+        { name: 'contact_phone', label: 'Telefon', value: j.contact_phone },
+      ],
+      { name: 'contact_linkedin', label: 'LinkedIn des Kontakts', type: 'url', value: j.contact_linkedin },
+      { name: 'notes', label: 'Notizen', type: 'textarea', value: j.notes },
+    ],
+    onSave: (v) => {
+      const row = { ...v, areas: (v.areas || '').split(',').map((x) => x.trim()).filter(Boolean), updated_at: new Date().toISOString() };
+      return run(() => (job ? db.update('jobs', job.id, row) : db.insert('jobs', { ...row, found_on: today() })), 'Gespeichert');
+    },
+    onDelete: job && (() => run(() => db.remove('jobs', job.id), 'Gelöscht')),
+  });
+}
+
 const UI_GROUPS = [
-  ['Reiter unten', [['tab:heute', 'Heute'], ['tab:kalender', 'Kalender'], ['tab:todos', 'To-Dos'], ['tab:finanzen', 'Finanzen']]],
+  ['Reiter unten', [['tab:heute', 'Heute'], ['tab:kalender', 'Kalender'], ['tab:todos', 'To-Dos'], ['tab:finanzen', 'Finanzen'], ['tab:jobs', 'Bewerbungen']]],
   ['Startseite', [['h:hero', 'Nächster Termin'], ['h:tiles', 'Kacheln'], ['h:termine', 'Termine heute'], ['h:todos', 'Zu erledigen'], ['h:geld', 'Geld']]],
   ['Finanzen: Reiter oben', [['fv:planung', 'Planung'], ['fv:kategorien', 'Kategorien'], ['fv:rueckblick', 'Rückblick']]],
   ['Finanzen: Übersicht', [['f:budget', 'Frei verfügbar'], ['f:konten', 'Konten'], ['f:monat', 'Monatszahlen'], ['f:schulden', 'Schulden']]],
+  ['Bewerbungen', [['j:stats', 'Kacheln'], ['j:filter', 'Filter']]],
   ['Finanzen: Planung', [['p:anstehend', 'Anstehend'], ['p:prognose', 'Prognose'], ['p:fest', 'Feste Posten']]],
 ];
 
@@ -1335,7 +1466,7 @@ function render() {
     $fab.hidden = true;
     return renderAuth();
   }
-  const view = { heute: viewToday, kalender: viewCal, todos: viewTodos, finanzen: viewFin, mehr: viewSettings }[state.tab]();
+  const view = { heute: viewToday, kalender: viewCal, todos: viewTodos, finanzen: viewFin, jobs: viewJobs, mehr: viewSettings }[state.tab]();
   // Eintritts-Animationen laufen nur nach einem Wechsel (Tab, Monat, Tag), nicht bei jedem Neuzeichnen.
   $app.dataset.anim = state.anim || '';
   state.anim = null;
@@ -2122,6 +2253,7 @@ const actions = {
     state.fabOpen = false;
     updateFab();
     if (el.dataset.k === 'tx') txForm(null, state.tab === 'finanzen' && state.accDetail ? { acc: state.accDetail } : {});
+    else if (el.dataset.k === 'job') jobForm();
     else ({ event: eventForm, todo: todoForm })[el.dataset.k]();
   },
   addtx: () => txForm(null, { acc: state.accDetail, type: state.accSeg === 'ein' ? 'einnahme' : 'ausgabe' }),
@@ -2136,6 +2268,16 @@ const actions = {
     }
   },
   addevent: () => eventForm(),
+  jobseg: (el) => {
+    state.jobSeg = el.dataset.v;
+    state.jobLimit = 40;
+    render();
+  },
+  jobmore: () => {
+    state.jobLimit += 40;
+    render();
+  },
+  editjob: (el) => jobForm(state.jobs.find((x) => x.id === el.dataset.id)),
   todolist: (el) => {
     state.listFilter = el.dataset.id;
     render();
@@ -2315,6 +2457,15 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.dataset.c === 'jobfilter') {
+    state.jobFilter[e.target.dataset.k] = e.target.value;
+    if (e.target.dataset.k === 'country') state.jobFilter.city = 'alle';
+    state.jobLimit = 40;
+    render();
+  }
+  if (e.target.dataset.c === 'jobstatus') {
+    run(() => db.update('jobs', e.target.dataset.id, { status: e.target.value, updated_at: new Date().toISOString() }), 'Status geändert');
+  }
   if (e.target.dataset.c === 'priofilter') {
     state.prioFilter = e.target.value;
     render();
