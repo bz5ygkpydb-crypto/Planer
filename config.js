@@ -38,4 +38,4 @@ export const DEFAULT_CATEGORIES = [
 ];
 
 // Kategorien für Einnahmen.
-export const DEFAULT_INCOME_CATEGORIES = ['Gehalt', 'Nebenjob', 'Kindergeld', 'Zinsen & Dividenden', 'Erstattung', 'Geschenk', 'Sonstige Einnahmen'];
+export const DEFAULT_INCOME_CATEGORIES = ['Gehalt', 'Nebenjob', 'Kindergeld', 'Zinsen & Dividenden', 'Erstattung', 'Geschenk', 'Sonstige Einnahmen', 'Nicht in „Übrig“ einrechnen'];
