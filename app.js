@@ -2462,5 +2462,20 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && (state.user || DEMO) && !$sheet.open) refresh();
 });
 
+// Beim Öffnen prüfen, ob eine neuere Version online ist. Dann einmal neu laden, damit nie eine alte Version hängen bleibt.
+(async () => {
+  try {
+    const mine = new URL(import.meta.url).searchParams.get('v');
+    const html = await (await fetch(`index.html?t=${Date.now()}`, { cache: 'no-store' })).text();
+    const latest = (html.match(/app\.js\?v=(\d+)/) || [])[1];
+    if (mine && latest && mine !== latest && !sessionStorage.getItem(`planer-update-${latest}`)) {
+      sessionStorage.setItem(`planer-update-${latest}`, '1');
+      location.reload();
+    }
+  } catch {
+    /* offline: einfach weiterarbeiten */
+  }
+})();
+
 applyLook();
 start();
