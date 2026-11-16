@@ -403,7 +403,9 @@ function upcomingRecurring(days) {
 async function loadSettings() {
   const s = await db.getSettings();
   state.categories = s?.categories?.length ? s.categories : DEFAULT_CATEGORIES;
-  state.incomeCategories = Array.isArray(s?.income_categories) ? s.income_categories : DEFAULT_INCOME_CATEGORIES;
+  state.incomeCategories = Array.isArray(s?.income_categories) ? [...s.income_categories] : [...DEFAULT_INCOME_CATEGORIES];
+  // Diese Kategorie gibt es immer: Einnahmen darin zählen bei "Übrig nach Fixkosten" nicht mit.
+  if (!state.incomeCategories.includes(NO_PLAN)) state.incomeCategories.push(NO_PLAN);
   state.token = s?.api_token || null;
   state.aliases = s?.category_aliases || {};
 }
@@ -830,12 +832,14 @@ function finMonthNav() {
 
 // Monatszahlen: Ausgaben sind nur die festen (Abos, Miete ...), Einnahmen die festen plus einmalige Extra-Einnahmen.
 // Eine einmalige Einnahme mit gleichem Betrag wie ein fester Posten zählt nicht doppelt (z. B. Gehalt aus dem Bankimport).
+// Einnahmen in dieser Kategorie zählen bei "Übrig nach Fixkosten" und im Monatssaldo nicht mit (z. B. einmalige Zuwendungen).
+const NO_PLAN = 'Nicht in „Übrig“ einrechnen';
 function monthFigures(month, txList) {
-  const fixed = recurringFor(month);
+  const fixed = recurringFor(month).filter((x) => x.category !== NO_PLAN);
   const fixInc = sumOf(fixed, 'einnahme');
   const fixExp = sumOf(fixed, 'ausgabe');
   const amts = fixed.filter((x) => x.type === 'einnahme').map((x) => Number(x.amount));
-  const extra = txList.filter((x) => x.type === 'einnahme' && !amts.includes(Number(x.amount))).reduce((s, x) => s + Number(x.amount), 0);
+  const extra = txList.filter((x) => x.type === 'einnahme' && x.category !== NO_PLAN && !amts.includes(Number(x.amount))).reduce((s, x) => s + Number(x.amount), 0);
   return { fixInc, fixExp, extra, income: fixInc + extra, saldo: fixInc + extra - fixExp };
 }
 
@@ -857,10 +861,11 @@ function cardBalance(a, b) {
   const limit = Number(a.credit_limit) || 0;
   if (a.kind !== 'kredit' || !limit) return `<span class="acard-bal">${eur.format(b.value)}</span>`;
   const used = Math.max(0, -b.value);
+  const credit = Math.max(0, b.value);
   const pct = Math.min(100, Math.round((used / limit) * 100));
-  return `<span class="acard-bal"><small>Verfügbar</small>${eur.format(limit - used)}</span>
+  return `<span class="acard-bal"><small>Verfügbar</small>${eur.format(limit - used + credit)}</span>
     <span class="limit"><i style="width:${pct}%"></i></span>
-    <span class="limit-t">Genutzt ${eur.format(used)} von ${eur.format(limit)}</span>`;
+    <span class="limit-t">${credit > 0 ? `Guthaben ${eur.format(credit)} · Limit ${eur.format(limit)}` : `Genutzt ${eur.format(used)} von ${eur.format(limit)}`}</span>`;
 }
 
 function accountCard(a, b) {
@@ -887,9 +892,26 @@ function accountsRow() {
 
 // Budget: "Frei verfügbar" ist das noch freie Kreditlimit der Kreditkarte (Advanzia), mit der du bezahlst.
 // Die Kacheln zeigen alle Konten zusammen, die offenen Schulden, die Fixkosten des Monats und was nach Fixkosten und Einnahmen übrig bleibt.
+// "Übrig nach Fixkosten": bis heute eingegangene Einnahmen (feste und gebuchte, außer der Kategorie "Nicht einrechnen")
+// minus die festen Ausgaben, die bis heute wirklich abgegangen sind.
+function leftAfterFixed() {
+  const t = today();
+  const cur = monthStart(new Date());
+  const all = recurringFor(cur);
+  const due = all.filter((x) => x.date <= t && x.category !== NO_PLAN);
+  const amts = all.filter((x) => x.type === 'einnahme').map((x) => Number(x.amount));
+  const extra = state.hist
+    .filter((x) => x.date >= iso(cur) && x.date <= t && x.type === 'einnahme' && x.category !== NO_PLAN && !amts.includes(Number(x.amount)))
+    .reduce((s, x) => s + Number(x.amount), 0);
+  const income = sumOf(due, 'einnahme') + extra;
+  const costs = sumOf(due, 'ausgabe');
+  return { income, costs, left: income - costs };
+}
+
 function budgetNow() {
   const bals = balancesNow();
   const act = state.accounts.filter((a) => a.active);
+  // Konten gesamt: alle genutzten (aktiven) Konten, im Plus oder Minus.
   const cash = act.reduce((s, a) => s + bals.get(a.id).value, 0);
   const cards = act.filter((a) => a.kind === 'kredit');
   const free = cards.reduce((s, a) => s + (Number(a.credit_limit) || 0) + bals.get(a.id).value, 0);
@@ -897,7 +919,7 @@ function budgetNow() {
   const debt = openDebts.reduce((s, d) => s + Number(d.amount), 0);
   const cur = monthStart(new Date());
   const fig = monthFigures(cur, state.hist.filter((x) => x.date >= iso(cur) && x.date <= iso(monthEnd(cur))));
-  return { cash, free, cardName: cards[0]?.name || '', hasLimit: cards.some((a) => Number(a.credit_limit) > 0), debt, debtCount: openDebts.length, fixExp: fig.fixExp, left: fig.saldo };
+  return { cash, free, cardName: cards[0]?.name || '', hasLimit: cards.some((a) => Number(a.credit_limit) > 0), debt, debtCount: openDebts.length, fixExp: fig.fixExp, left: leftAfterFixed().left };
 }
 
 function budgetHero() {
@@ -976,8 +998,20 @@ function viewAccountDetail() {
   // Richtung nach Art der Buchung, nicht nach dem Betrag: Auch eine Buchung über 0 € gehört zu Einnahmen oder Ausgaben.
   const dir = (x) => (x.type === 'umbuchung' ? (x.to_account_id === a.id ? 1 : -1) : x.type === 'einnahme' ? 1 : -1);
   const net = (x) => dir(x) * Number(x.amount);
-  const inc = month.filter((x) => dir(x) > 0).reduce((s, x) => s + net(x), 0);
-  const out = month.filter((x) => dir(x) < 0).reduce((s, x) => s - net(x), 0);
+  // Eingänge und Ausgänge seit dem eingetragenen Stand: genau die Buchungen, die den Kontostand seitdem verändert haben
+  // (gleiche Regel wie bei der Berechnung des Kontostands). So passen die Kacheln zu "Genutzt" und "Verfügbar".
+  const since = a.balance_date || '';
+  const setAt = Date.parse(a.balance_set_at || a.created_at || '') || 0;
+  const mine = (x) => x.account_id === a.id || x.to_account_id === a.id;
+  const counted = state.accTx.filter((x) => mine(x) && x.date <= t && (x.date > since || (x.date === since && Date.parse(x.created_at) > setAt)));
+  if (since) {
+    for (let m = monthStart(parseISO(since)); m <= monthStart(new Date()); m = addMonths(m, 1)) {
+      for (const x of recurringFor(m)) if (mine(x) && x.date > since && x.date <= t) counted.push(x);
+    }
+  }
+  const inc = counted.filter((x) => dir(x) > 0).reduce((s, x) => s + net(x), 0);
+  const out = counted.filter((x) => dir(x) < 0).reduce((s, x) => s - net(x), 0);
+  const sinceLabel = since ? `seit ${shortDate(since)}` : 'seit Stand';
   const seg = state.accSeg;
   const shown = month
     .filter((x) => seg === 'alle' || (seg === 'ein' ? dir(x) > 0 : dir(x) < 0))
@@ -1012,8 +1046,8 @@ function viewAccountDetail() {
       <span class="acard-top">${br.logo}<span class="acard-kind">${KINDS[a.kind] || ''}</span></span>
       ${cardBalance(a, b)}
       <span class="acard-foot"><span>${esc(a.name)}</span><span>${a.balance_date ? `Stand-Eintrag ${fullDate(a.balance_date)}` : 'noch kein Eintrag'}</span></span></section>
+    <div class="stats"><div class="stat"><span>Eingänge ${sinceLabel}</span><b class="c-green">+${eur.format(inc)}</b></div><div class="stat"><span>Ausgänge ${sinceLabel}</span><b>−${eur.format(out)}</b></div></div>
     ${finMonthNav()}
-    <div class="stats"><div class="stat"><span>Eingänge</span><b class="c-green">+${eur.format(inc)}</b></div><div class="stat"><span>Ausgänge</span><b>−${eur.format(out)}</b></div></div>
     <div class="seg" role="group" aria-label="Filter">${[['alle', 'Alle'], ['ein', 'Einnahmen'], ['aus', 'Ausgaben']].map(segBtn).join('')}</div>
     <section class="card">${shown.length ? `<ul class="list bookings">${groups}</ul><p class="sumline"><span>${shown.length} Buchung${shown.length === 1 ? '' : 'en'}</span></p>` : '<p class="empty">Keine Buchungen in diesem Monat</p>'}
       <button class="btn block" data-a="addtx" style="margin-top:10px">Buchung hinzufügen</button></section>`;
