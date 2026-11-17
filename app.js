@@ -1227,7 +1227,7 @@ const JOB_GROUPS = {
 };
 const JOB_TYPES = ['Praktikum', 'Summer Analyst', 'Graduate / Trainee', 'Junior', 'Werkstudent', 'Erfahren (Stretch)'];
 const JOB_FITS = ['Top', 'Gut', 'Mittel', 'Stretch'];
-const COUNTRY_LABEL = { CH: 'Schweiz', DE: 'Deutschland', andere: 'Andere' };
+const COUNTRY_LABEL = { CH: 'Schweiz', DE: 'Deutschland', PL: 'Polen', andere: 'Andere' };
 const FIT_RANK = { Top: 0, Gut: 1, Mittel: 2, Stretch: 3 };
 
 async function loadJobs() {
