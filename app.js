@@ -1252,6 +1252,7 @@ function jobCard(j) {
   const place = [j.company, j.city || j.location].filter(Boolean).join(' · ');
   const chips = [
     j.fit ? `<span class="jchip fit-${esc(j.fit)}">${esc(j.fit)}</span>` : '',
+    j.docs_status === 'bereit' ? '<span class="jchip docs">📄 Unterlagen bereit</span>' : j.docs_status === 'beworben' ? '<span class="jchip docs">✓ Beworben</span>' : '',
     j.job_type ? `<span class="jchip">${esc(j.job_type)}</span>` : '',
     state.jobSeg === 'alle' ? `<span class="jchip st">${esc(j.status)}</span>` : '',
     dlText ? `<span class="jchip ${dl !== null && dl >= 0 && dl <= 7 ? 'warn' : ''}">${esc(dlText)}</span>` : '',
@@ -1303,10 +1304,20 @@ function viewJobs() {
   return `${head('Bewerbungen', `${all.length} Stellen · ${list.length} in dieser Ansicht`)}${parts.join('')}`;
 }
 
+function jobDocsHTML(j) {
+  if (!j.docs_status || j.docs_status === 'keine') return '';
+  const line = (label, v) => (v ? `<div class="dl"><b>${label}</b><span>${esc(v).replace(/\n/g, '<br>')}</span></div>` : '');
+  const kw = (j.keywords || []).length ? `<div class="dl"><b>Schlüsselwörter</b><span class="jchips">${j.keywords.map((k) => `<span class="jchip">${esc(k)}</span>`).join('')}</span></div>` : '';
+  const when = j.docs_created_at ? new Date(j.docs_created_at).toLocaleDateString('de-DE') : '';
+  return `<div class="docsbox"><h4>Unterlagen ${j.docs_status === 'beworben' ? 'verschickt' : 'bereit'}${when ? ` · ${when}` : ''}</h4>
+    ${line('Ordner (Mac)', j.docs_folder)}${line('Zusammenfassung', j.docs_summary)}${kw}${line('Offene Punkte', j.docs_open_points)}${line('Verlauf', j.docs_log)}</div>`;
+}
+
 function jobForm(job) {
   const j = job || {};
   openSheet({
     title: job ? 'Stelle bearbeiten' : 'Neue Stelle',
+    html: job ? jobDocsHTML(j) : '',
     fields: [
       { name: 'title', label: 'Stelle', required: true, value: j.title },
       { name: 'company', label: 'Firma', value: j.company },
@@ -1504,8 +1515,8 @@ function closeSheet() {
   }, 250);
 }
 
-function openSheet({ title, text, fields = [], saveLabel = 'Speichern', onSave, onDelete }) {
-  $sheet.innerHTML = `<form><div class="grab"></div><h3>${esc(title)}</h3>${text ? `<p class="hint">${esc(text)}</p>` : ''}${fields.map(fieldHTML).join('')}
+function openSheet({ title, text, html = '', fields = [], saveLabel = 'Speichern', onSave, onDelete }) {
+  $sheet.innerHTML = `<form><div class="grab"></div><h3>${esc(title)}</h3>${text ? `<p class="hint">${esc(text)}</p>` : ''}${html}${fields.map(fieldHTML).join('')}
     <div class="btnrow">
       ${onDelete ? '<button type="button" class="btn danger" data-s="del">Löschen</button>' : ''}
       <button type="button" class="btn" data-s="cancel">Abbrechen</button>
