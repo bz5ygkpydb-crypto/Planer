@@ -662,3 +662,9 @@ details summary { font-weight: 700; cursor: pointer; padding: 4px 0; }
 .jobact { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .jstatus { width: auto; min-height: 34px; font-size: 13px; font-weight: 600; padding: 4px 28px 4px 10px; border-radius: 10px; }
 .jlink { color: var(--accent); font-weight: 700; font-size: 13.5px; text-decoration: none; white-space: nowrap; }
+.jchip.docs { background: color-mix(in srgb, var(--accent, #3b82f6) 16%, transparent); color: var(--accent, #3b82f6); }
+.docsbox { margin: 8px 0 14px; padding: 12px; border-radius: 12px; background: color-mix(in srgb, var(--text) 6%, transparent); font-size: 14px; }
+.docsbox h4 { margin: 0 0 8px; font-size: 14px; }
+.docsbox .dl { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.docsbox .dl b { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; }
+.docsbox .dl span { word-break: break-word; }
