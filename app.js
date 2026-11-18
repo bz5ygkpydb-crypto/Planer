@@ -1252,7 +1252,7 @@ function jobCard(j) {
   const place = [j.company, j.city || j.location].filter(Boolean).join(' · ');
   const chips = [
     j.fit ? `<span class="jchip fit-${esc(j.fit)}">${esc(j.fit)}</span>` : '',
-    j.docs_status === 'bereit' ? '<span class="jchip docs">📄 Unterlagen bereit</span>' : j.docs_status === 'beworben' ? '<span class="jchip docs">✓ Beworben</span>' : '',
+    j.docs_status === 'angefordert' || j.docs_status === 'in_arbeit' ? '<span class="jchip docs">⏳ Unterlagen werden erstellt</span>' : j.docs_status === 'bereit' ? '<span class="jchip docs">📄 Unterlagen bereit</span>' : j.docs_status === 'beworben' ? '<span class="jchip docs">✓ Beworben</span>' : '',
     j.job_type ? `<span class="jchip">${esc(j.job_type)}</span>` : '',
     state.jobSeg === 'alle' ? `<span class="jchip st">${esc(j.status)}</span>` : '',
     dlText ? `<span class="jchip ${dl !== null && dl >= 0 && dl <= 7 ? 'warn' : ''}">${esc(dlText)}</span>` : '',
@@ -1305,7 +1305,12 @@ function viewJobs() {
 }
 
 function jobDocsHTML(j) {
-  if (!j.docs_status || j.docs_status === 'keine') return '';
+  if (!j.docs_status || j.docs_status === 'keine') {
+    return `<div class="docsbox"><h4>Unterlagen</h4><p class="hint">Lebenslauf und Anschreiben für diese Stelle erstellen lassen. Sie landen auf deinem Mac im Ordner Bewerbungen/${esc(j.city || 'Stadt')}/. Das dauert je nach Auslastung bis zu einer Stunde und läuft nur, wenn dein Mac an ist.</p><button type="button" class="btn primary block" data-docs-req>Unterlagen erstellen</button></div>`;
+  }
+  if (j.docs_status === 'angefordert' || j.docs_status === 'in_arbeit') {
+    return `<div class="docsbox"><h4>${j.docs_status === 'in_arbeit' ? 'Unterlagen werden erstellt …' : 'Unterlagen angefordert'}</h4><p class="hint">${j.docs_status === 'in_arbeit' ? 'Die Agenten arbeiten gerade daran.' : 'Wird beim nächsten Durchlauf erstellt (alle 30 Minuten, wenn dein Mac an ist).'}</p>${j.docs_log ? `<div class="dl"><b>Verlauf</b><span>${esc(j.docs_log).replace(/\n/g, '<br>')}</span></div>` : ''}</div>`;
+  }
   const line = (label, v) => (v ? `<div class="dl"><b>${label}</b><span>${esc(v).replace(/\n/g, '<br>')}</span></div>` : '');
   const kw = (j.keywords || []).length ? `<div class="dl"><b>Schlüsselwörter</b><span class="jchips">${j.keywords.map((k) => `<span class="jchip">${esc(k)}</span>`).join('')}</span></div>` : '';
   const when = j.docs_created_at ? new Date(j.docs_created_at).toLocaleDateString('de-DE') : '';
@@ -1350,6 +1355,15 @@ function jobForm(job) {
     },
     onDelete: job && (() => run(() => db.remove('jobs', job.id), 'Gelöscht')),
   });
+  const req = $sheet.querySelector('[data-docs-req]');
+  if (req && job) {
+    req.onclick = async () => {
+      const stamp = new Date().toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const log = `${job.docs_log ? job.docs_log + '\n' : ''}${stamp} Unterlagen in der App angefordert`;
+      await run(() => db.update('jobs', job.id, { docs_status: 'angefordert', docs_log: log, updated_at: new Date().toISOString() }), 'Angefordert');
+      closeSheet();
+    };
+  }
 }
 
 const UI_GROUPS = [
