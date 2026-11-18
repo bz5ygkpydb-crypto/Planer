@@ -104,6 +104,7 @@ const state = {
   tab: 'heute',
   anim: 'view',
   calView: 'monat',
+  planerView: 'kalender',
   openEv: null,
   showDone: false,
   fabOpen: false,
@@ -448,6 +449,7 @@ const ICONS = {
   heute: '<svg viewBox="0 0 24 24"><path d="M4 11.2L12 4.5l8 6.7"/><path d="M6.2 9.8V19h11.6V9.8"/><path d="M10 19v-5h4v5"/></svg>',
   kalender: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   todos: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.3l2.6 2.6 4.8-5.3"/></svg>',
+  planer: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8 14.5l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   finanzen: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="3.5"/><path d="M3 10.5h18M15.5 15h2"/></svg>',
   jobs: '<svg viewBox="0 0 24 24"><rect x="3" y="7.5" width="18" height="12" rx="3"/><path d="M9 7.5V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1.5M3 12.5h18"/></svg>',
   mehr: '<svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/></svg>',
@@ -455,8 +457,7 @@ const ICONS = {
 const shown = (id) => !state.hiddenUI.has(id);
 const TABS = [
   ['heute', 'Heute'],
-  ['kalender', 'Kalender'],
-  ['todos', 'To-Dos'],
+  ['planer', 'Planer'],
   ['finanzen', 'Finanzen'],
   ['jobs', 'Jobs'],
   ['mehr', 'Mehr'],
@@ -647,7 +648,7 @@ function viewToday() {
     ${shown('h:hero') ? hero : ''}
     ${shown('h:tiles') ? `<div class="tiles">
       <button class="tile" data-a="goday" data-date="${t}"><b>${todayEv.length}</b><span>Termine heute</span></button>
-      <button class="tile" data-a="tab" data-tab="todos"><b>${dueTodos.length}</b><span>Heute fällig</span></button>
+      <button class="tile" data-a="goplaner" data-pv="todos"><b>${dueTodos.length}</b><span>Heute fällig</span></button>
       <button class="tile" data-a="tab" data-tab="finanzen"><b>${eur.format(spent).replace(/,00(?=\s)/, '')}</b><span>Feste Ausgaben</span></button>
     </div>` : ''}
     ${shown('h:termine') ? `<section class="card"><h2>Termine heute</h2>${evRows ? `<ul class="list">${evRows}</ul>` : '<p class="empty">Keine Termine heute. Genieß den freien Tag ✨</p>'}</section>` : ''}
@@ -745,6 +746,17 @@ function viewAgenda(cm) {
       ([day, evs]) => `<div class="agenda-day">${relDay(day)} <small>${dayLabel(day)}</small></div><ul class="evlist">${evs.map((e) => evHtml(e, day, cm)).join('')}</ul>`,
     )
     .join('')}</div>`;
+}
+
+// ---------- Planer (Kalender + To-Dos zusammen) ----------
+function viewPlaner() {
+  const pv = state.planerView;
+  const seg = `<div class="seg"><button class="${pv === 'kalender' ? 'on' : ''}" data-a="planerview" data-v="kalender">Kalender</button><button class="${pv === 'todos' ? 'on' : ''}" data-a="planerview" data-v="todos">To-Dos</button></div>`;
+  const inner = pv === 'todos' ? viewTodos() : viewCal();
+  // Planer-Seg direkt nach dem öffnenden </header> einfügen
+  const cut = inner.indexOf('</header>');
+  if (cut === -1) return seg + inner;
+  return inner.slice(0, cut + 9) + seg + inner.slice(cut + 9);
 }
 
 // ---------- To-Dos ----------
@@ -1367,7 +1379,7 @@ function jobForm(job) {
 }
 
 const UI_GROUPS = [
-  ['Reiter unten', [['tab:heute', 'Heute'], ['tab:kalender', 'Kalender'], ['tab:todos', 'To-Dos'], ['tab:finanzen', 'Finanzen'], ['tab:jobs', 'Bewerbungen']]],
+  ['Reiter unten', [['tab:heute', 'Heute'], ['tab:planer', 'Planer'], ['tab:finanzen', 'Finanzen'], ['tab:jobs', 'Bewerbungen']]],
   ['Startseite', [['h:hero', 'Nächster Termin'], ['h:tiles', 'Kacheln'], ['h:termine', 'Termine heute'], ['h:todos', 'Zu erledigen'], ['h:geld', 'Geld']]],
   ['Finanzen: Reiter oben', [['fv:planung', 'Planung'], ['fv:kategorien', 'Kategorien'], ['fv:rueckblick', 'Rückblick']]],
   ['Finanzen: Übersicht', [['f:budget', 'Frei verfügbar'], ['f:konten', 'Konten'], ['f:monat', 'Monatszahlen'], ['f:schulden', 'Schulden']]],
@@ -1491,7 +1503,7 @@ function render() {
     $fab.hidden = true;
     return renderAuth();
   }
-  const view = { heute: viewToday, kalender: viewCal, todos: viewTodos, finanzen: viewFin, jobs: viewJobs, mehr: viewSettings }[state.tab]();
+  const view = { heute: viewToday, planer: viewPlaner, finanzen: viewFin, jobs: viewJobs, mehr: viewSettings }[state.tab]();
   // Eintritts-Animationen laufen nur nach einem Wechsel (Tab, Monat, Tag), nicht bei jedem Neuzeichnen.
   $app.dataset.anim = state.anim || '';
   state.anim = null;
@@ -2293,6 +2305,18 @@ const actions = {
     }
   },
   addevent: () => eventForm(),
+  planerview: (el) => {
+    state.planerView = el.dataset.v;
+    render();
+    window.scrollTo(0, 0);
+  },
+  goplaner: (el) => {
+    state.tab = 'planer';
+    state.planerView = el.dataset.pv || 'kalender';
+    state.anim = 'view';
+    render();
+    window.scrollTo(0, 0);
+  },
   jobseg: (el) => {
     state.jobSeg = el.dataset.v;
     state.jobLimit = 40;
@@ -2317,7 +2341,8 @@ const actions = {
     scrollToDay();
   },
   goday: (el) => {
-    state.tab = 'kalender';
+    state.tab = 'planer';
+    state.planerView = 'kalender';
     state.calView = 'monat';
     state.selDate = el.dataset.date;
     state.calMonth = monthStart(parseISO(el.dataset.date));
