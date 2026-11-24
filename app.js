@@ -1062,6 +1062,64 @@ function viewAccountDetail() {
 const eur0 = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 const secHead = (title, right = '') => `<div class="sec"><h3>${title}</h3>${right}</div>`;
 
+// ---------- Diagramme (SVG, ohne Bibliothek) ----------
+const CHART_COLORS = ['var(--accent)', '#14b8a6', 'var(--gold)', '#8b6cf0', '#64748b', '#e0803a', '#94a3b8'];
+
+// Kreisdiagramm: größte Kategorien einzeln, der Rest als "Weitere".
+function donutChart(list, total) {
+  if (!list.length || !total) return '';
+  const top = list.slice(0, 6);
+  const rest = list.slice(6).reduce((s, [, v]) => s + v, 0);
+  const items = rest > 0 ? [...top, ['Weitere', rest]] : top;
+  const R = 56;
+  const C = 2 * Math.PI * R;
+  let off = 0;
+  const arcs = items
+    .map(([, v], i) => {
+      const len = (v / total) * C;
+      const gap = items.length > 1 ? 2 : 0;
+      const el = `<circle class="seg-arc" cx="74" cy="74" r="${R}" stroke="${CHART_COLORS[i % CHART_COLORS.length]}" stroke-dasharray="${Math.max(0, len - gap).toFixed(2)} ${(C - Math.max(0, len - gap)).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" style="animation-delay:${i * 70}ms"/>`;
+      off += len;
+      return el;
+    })
+    .join('');
+  const legend = items
+    .map(([k, v], i) => `<div><i style="background:${CHART_COLORS[i % CHART_COLORS.length]}"></i><span>${esc(k)}</span><b>${Math.round((v / total) * 100)} %</b></div>`)
+    .join('');
+  return `<div class="donutbox"><div class="donutmid"><svg class="donut" viewBox="0 0 148 148" aria-hidden="true"><circle class="track" cx="74" cy="74" r="${R}"/>${arcs}</svg>
+    <div class="mid"><b>${eur0.format(total)}</b><span>Gesamt</span></div></div><div class="legend">${legend}</div></div>`;
+}
+
+// Balken je Monat: Einnahmen (Akzent) und Ausgaben (Messing).
+function monthBars(data, label) {
+  const W = 320;
+  const H = 150;
+  const padL = 34;
+  const padB = 20;
+  const max = Math.max(1, ...data.flatMap((d) => [d.inc, d.exp]));
+  const nice = Math.pow(10, Math.floor(Math.log10(max)));
+  const top = Math.ceil(max / nice) * nice;
+  const ph = H - padB - 6;
+  const slot = (W - padL) / data.length;
+  const bw = Math.min(14, slot / 2 - 3);
+  const y = (v) => 6 + ph - (v / top) * ph;
+  const grid = [0, 0.5, 1]
+    .map((f) => `<line class="gl" x1="${padL}" x2="${W}" y1="${y(top * f).toFixed(1)}" y2="${y(top * f).toFixed(1)}"/><text class="y" x="${padL - 6}" y="${(y(top * f) + 3).toFixed(1)}">${num0.format(top * f)}</text>`)
+    .join('');
+  const cols = data
+    .map((d, i) => {
+      const cx = padL + slot * i + slot / 2;
+      const hi = (d.inc / top) * ph;
+      const he = (d.exp / top) * ph;
+      return `<rect class="bi" x="${(cx - bw - 1).toFixed(1)}" y="${(6 + ph - hi).toFixed(1)}" width="${bw}" height="${hi.toFixed(1)}" rx="3" style="animation-delay:${i * 60}ms"/>
+        <rect class="be" x="${(cx + 1).toFixed(1)}" y="${(6 + ph - he).toFixed(1)}" width="${bw}" height="${he.toFixed(1)}" rx="3" style="animation-delay:${i * 60 + 80}ms"/>
+        <text x="${cx.toFixed(1)}" y="${H - 5}">${label(d.m)}</text>`;
+    })
+    .join('');
+  return `<div class="chart"><svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Einnahmen und Ausgaben der letzten 6 Monate">${grid}${cols}</svg>
+    <div class="chartkey"><span><i style="background:var(--accent)"></i>Einnahmen</span><span><i style="background:var(--gold)"></i>Ausgaben</span></div></div>`;
+}
+
 function viewFinOverview() {
   const fig = monthFigures(state.finMonth, state.tx);
   const parts = [];
@@ -1097,7 +1155,7 @@ function viewFinCategories() {
           <div class="bar"><i style="width:${Math.max(3, (v / list[0][1]) * 100)}%"></i></div></div>`,
       )
       .join('');
-    return `<section class="card"><h2>${title}</h2>${bars || `<p class="empty">${empty}</p>`}${list.length ? `<p class="sumline"><span>Gesamt: <b>${eur.format(total)}</b></span></p>` : ''}</section>`;
+    return `<section class="card"><h2>${title}</h2>${type === 'ausgabe' ? donutChart(list, total) : ''}${bars || `<p class="empty">${empty}</p>`}${list.length ? `<p class="sumline"><span>Gesamt: <b>${eur.format(total)}</b></span></p>` : ''}</section>`;
   };
   return `${finMonthNav()}${block('ausgabe', 'Ausgaben nach Kategorie', 'Noch keine Ausgaben')}${block('einnahme', 'Einnahmen nach Kategorie', 'Noch keine Einnahmen')}`;
 }
@@ -1208,6 +1266,7 @@ function viewFinReview() {
     .join('');
   const colTotals = data.map((d) => `<td><b>${num0.format(d.exp)}</b></td>`).join('');
   return `<section class="card"><h2>Die letzten 6 Monate</h2>
+      ${monthBars(data, label)}
       <div class="tablewrap"><table class="tbl"><thead><tr><th></th><th>Einnahmen</th><th>Ausgaben</th><th>Saldo</th></tr></thead><tbody>${sumRows}</tbody></table></div>
       <p class="hint" style="margin:8px 0 0">Beträge in €. Der laufende Monat ist noch nicht abgeschlossen. Ø Ausgaben pro Monat (ohne laufenden Monat): <b>${eur.format(avg)}</b></p>
     </section>
