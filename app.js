@@ -1591,6 +1591,9 @@ function viewSettings() {
     </section>
     <section class="card"><h2>Darstellung</h2>
       <div class="swatches">${ACCENTS.map(([c, n]) => `<button class="sw ${(getLook().accent || ACCENTS[0][0]) === c ? 'on' : ''}" style="--c:${c}" data-a="setaccent" data-c="${c}" aria-label="${n}"></button>`).join('')}</div>
+      <h4 style="margin:14px 0 8px">Stil</h4>
+      <div class="seg" style="margin:0 0 14px">${[['business', 'Business'], ['glas', 'Glas']].map(([v, l]) => `<button class="${getLook().style === v ? 'on' : ''}" data-a="setstyle" data-v="${v}">${l}</button>`).join('')}</div>
+      <p class="hint" style="margin:-6px 0 14px">Business: dunkel, flach, mit Seitenleiste. Glas: der bisherige Stil mit Glasflächen und Blau.</p>
       <h4 style="margin:14px 0 8px">Layout</h4>
       <div class="seg" style="margin:0 0 14px">${[['auto', 'Automatisch'], ['mobile', 'Handy'], ['laptop', 'Laptop']].map(([v, l]) => `<button class="${getLook().view === v ? 'on' : ''}" data-a="setview" data-v="${v}">${l}</button>`).join('')}</div>
       <div class="seg" style="margin:0">${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([v, l]) => `<button class="${getLook().theme === v ? 'on' : ''}" data-a="settheme" data-t="${v}">${l}</button>`).join('')}</div>
@@ -2653,14 +2656,17 @@ const ACCENTS = [
 ];
 function getLook() {
   try {
-    return { accent: localStorage.getItem('planer-accent') || '', theme: localStorage.getItem('planer-theme') || 'dark', view: localStorage.getItem('planer-view') || 'auto' };
+    return { accent: localStorage.getItem('planer-accent') || '', theme: localStorage.getItem('planer-theme') || 'dark', view: localStorage.getItem('planer-view') || 'auto', style: localStorage.getItem('planer-style') === 'glas' ? 'glas' : 'business' };
   } catch {
-    return { accent: '', theme: 'dark', view: 'auto' };
+    return { accent: '', theme: 'dark', view: 'auto', style: 'business' };
   }
 }
 function applyLook() {
-  const { accent, theme, view } = getLook();
+  const { accent, theme, view, style } = getLook();
   const root = document.documentElement;
+  root.dataset.style = style;
+  const biz = document.getElementById('style-business');
+  if (biz) biz.media = style === 'glas' ? 'not all' : 'all';
   root.dataset.layout = view === 'laptop' || view === 'mobile' ? view : window.matchMedia('(min-width: 900px)').matches ? 'laptop' : 'mobile';
   if (/^#[0-9a-f]{6}$/i.test(accent)) root.style.setProperty('--accent', accent);
   else root.style.removeProperty('--accent');
@@ -2672,6 +2678,7 @@ function setLook(patch) {
     if ('accent' in patch) localStorage.setItem('planer-accent', patch.accent);
     if ('theme' in patch) localStorage.setItem('planer-theme', patch.theme);
     if ('view' in patch) localStorage.setItem('planer-view', patch.view);
+    if ('style' in patch) localStorage.setItem('planer-style', patch.style);
   } catch {
     /* Speicher nicht verfügbar */
   }
@@ -2815,6 +2822,7 @@ const actions = {
   setaccent: (el) => setLook({ accent: el.dataset.c }),
   settheme: (el) => setLook({ theme: el.dataset.t }),
   setview: (el) => setLook({ view: el.dataset.v }),
+  setstyle: (el) => setLook({ style: el.dataset.v }),
   finprev: () => ((state.finMonth = addMonths(state.finMonth, -1)), refresh()),
   finnext: () => ((state.finMonth = addMonths(state.finMonth, 1)), refresh()),
   fintoday: () => ((state.finMonth = monthStart(new Date())), refresh()),
