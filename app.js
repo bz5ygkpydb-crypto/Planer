@@ -125,6 +125,7 @@ const state = {
   todos: [],
   tx: [],
   recurring: [],
+  overrides: [],
   accounts: [],
   hist: [],
   accTx: [],
@@ -362,6 +363,16 @@ async function loadTodoLists() {
 async function loadDebts() {
   state.debts = await db.list('debts');
 }
+// Monatsanpassungen für feste Posten. Fehlt die Tabelle noch, läuft die App ohne diese Funktion weiter.
+async function loadOverrides() {
+  try {
+    state.overrides = await db.list('recurring_overrides');
+    state.overridesMissing = false;
+  } catch {
+    state.overrides = [];
+    state.overridesMissing = true;
+  }
+}
 async function loadRecurring() {
   state.recurring = (await db.list('recurring')).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
 }
@@ -377,7 +388,8 @@ function recurringFor(month) {
     if (diff < 0 || diff % (r.interval_months || 1)) continue;
     const date = iso(new Date(month.getFullYear(), month.getMonth(), Math.min(s.getDate(), last)));
     if (date < r.start_date || (r.end_date && date > r.end_date)) continue;
-    out.push({ recurringId: r.id, type: r.type, amount: r.amount, category: r.category, account_id: r.account_id, merchant: r.name, date, created_at: '' });
+    const ov = state.overrides.find((o) => o.recurring_id === r.id && String(o.month).slice(0, 7) === date.slice(0, 7));
+    out.push({ recurringId: r.id, type: r.type, amount: ov ? ov.amount : r.amount, baseAmount: r.amount, overridden: Boolean(ov), category: r.category, account_id: r.account_id, merchant: r.name, date, created_at: '' });
   }
   return out;
 }
@@ -417,7 +429,7 @@ async function loadSettings() {
 
 async function refresh() {
   try {
-    await Promise.all([loadEvents(), loadAgenda(), loadCalendars(), loadTodos(), loadTx(), loadHist(), loadAccounts(), loadRecurring(), loadDebts(), loadTodoLists(), loadJobs(), loadSettings(), loadInvites()]);
+    await Promise.all([loadEvents(), loadAgenda(), loadCalendars(), loadTodos(), loadTx(), loadHist(), loadAccounts(), loadRecurring(), loadOverrides(), loadDebts(), loadTodoLists(), loadJobs(), loadSettings(), loadInvites()]);
     if (await applyConfigRenames()) await Promise.all([loadTx(), loadHist(), loadRecurring()]);
     await loadAccountTx();
     state.error = null;
@@ -1032,9 +1044,10 @@ function viewAccountDetail() {
       transfer ? `${accName(x.account_id) || '?'} → ${accName(x.to_account_id) || '?'}` : x.category || (x.type === 'ausgabe' && !x.recurringId ? 'Kategorie wählen' : ''),
       x.source === 'apple_pay' ? 'Apple Pay' : '',
       x.recurringId ? (x.date > t ? 'geplant' : 'fest') : '',
+      x.overridden ? 'nur dieser Monat angepasst' : '',
       !x.recurringId && Number(x.amount) === 0 ? 'Betrag fehlt, antippen' : '',
     ].filter(Boolean).join(' · ');
-    const target = x.recurringId ? `data-a="editrec" data-id="${x.recurringId}"` : `data-a="edittx" data-id="${x.id}"`;
+    const target = x.recurringId ? `data-a="recmonth" data-id="${x.recurringId}" data-month="${x.date.slice(0, 7)}"` : `data-a="edittx" data-id="${x.id}"`;
     return `<li class="row"><span class="dot ${up ? 'in' : 'out'}">${transfer ? '⇄' : up ? '↓' : '↑'}</span>
       <button class="main" ${target}><span class="title">${esc(title)}</span><span class="sub">${esc(sub)}</span></button>
       <span class="amount ${up ? 'pos' : 'neg'}">${up ? '+' : '−'}${eur.format(Math.abs(v))}</span></li>`;
@@ -1172,7 +1185,7 @@ function upcomingCard() {
       const when = inDays === 0 ? 'heute' : inDays === 1 ? 'morgen' : `in ${inDays} Tagen`;
       const sub = `${when} · ${x.type === 'einnahme' ? 'Einnahme' : 'Abbuchung'}`;
       return `<li class="row"><span class="when"><b>${shortDate(x.date)}</b><small>${d.toLocaleDateString('de-DE', { weekday: 'short' })}</small></span>
-        <button class="main" data-a="editrec" data-id="${x.recurringId}"><span class="title">${esc(x.merchant)}</span><span class="sub">${esc(sub)}</span></button>
+        <button class="main" data-a="recmonth" data-id="${x.recurringId}" data-month="${x.date.slice(0, 7)}"><span class="title">${esc(x.merchant)}</span><span class="sub">${esc(sub)}</span></button>
         <span class="amount ${x.type === 'einnahme' ? 'pos' : 'neg'}">${signedEur(x)}</span></li>`;
     })
     .join('');
@@ -1601,10 +1614,10 @@ function closeSheet() {
   }, 250);
 }
 
-function openSheet({ title, text, html = '', fields = [], saveLabel = 'Speichern', onSave, onDelete }) {
+function openSheet({ title, text, html = '', fields = [], saveLabel = 'Speichern', deleteLabel = 'Löschen', onSave, onDelete }) {
   $sheet.innerHTML = `<form><div class="grab"></div><h3>${esc(title)}</h3>${text ? `<p class="hint">${esc(text)}</p>` : ''}${html}${fields.map(fieldHTML).join('')}
     <div class="btnrow">
-      ${onDelete ? '<button type="button" class="btn danger" data-s="del">Löschen</button>' : ''}
+      ${onDelete ? `<button type="button" class="btn danger" data-s="del">${esc(deleteLabel)}</button>` : ''}
       <button type="button" class="btn" data-s="cancel">Abbrechen</button>
       <button class="btn primary grow">${esc(saveLabel)}</button>
     </div></form>`;
@@ -1864,7 +1877,7 @@ function txForm(tx, preset = {}) {
               label: 'Wiederholung',
               type: 'select',
               value: '0',
-              options: [['0', 'Einmalig'], ['1', 'Jeden Monat'], ['3', 'Jedes Quartal'], ['12', 'Jedes Jahr']],
+              options: [['0', 'Nur dieser Monat (einmalig)'], ['1', 'Jeden Monat'], ['3', 'Jedes Quartal'], ['12', 'Jedes Jahr']],
               showIf: 'type!=umbuchung',
             },
           ]),
@@ -1927,6 +1940,46 @@ function txForm(tx, preset = {}) {
   });
 }
 
+// Betrag eines festen Postens nur für einen Monat ändern (z. B. Weihnachtsgeld obendrauf).
+// Der nächste Monat läuft mit dem normalen Betrag weiter.
+function recMonthForm(rec, ym) {
+  if (!rec) return;
+  const monthDate = parseISO(`${ym}-01`);
+  const monthKey = iso(monthDate);
+  const label = monthDate.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+  const ov = state.overrides.find((o) => o.recurring_id === rec.id && String(o.month).slice(0, 7) === ym);
+  const base = Number(rec.amount);
+  const current = ov ? Number(ov.amount) : base;
+  const income = rec.type === 'einnahme';
+  openSheet({
+    title: `${rec.name} · ${label}`,
+    text: `Normaler Betrag: ${eur.format(base)}. Was du hier einträgst, gilt nur für ${label}. Ab dem nächsten Monat läuft wieder der normale Betrag.`,
+    html: `<button type="button" class="btn small" style="margin:0 0 14px" data-a="editrec" data-id="${rec.id}">Für alle Monate ändern</button>`,
+    fields: [
+      { name: 'amount', label: income ? `Betrag in ${label} (€), inkl. Extra` : `Betrag in ${label} (€)`, required: true, inputmode: 'decimal', value: String(current).replace('.', ',') },
+      ...(income ? [{ name: 'extra', label: 'Oder: Extra obendrauf (€), z. B. Weihnachtsgeld', inputmode: 'decimal', placeholder: '0,00' }] : []),
+    ],
+    saveLabel: 'Für diesen Monat speichern',
+    deleteLabel: 'Zurücksetzen',
+    onSave: (v) => {
+      let amount = parseAmount(v.amount);
+      const extra = v.extra ? parseAmount(v.extra) : null;
+      if (extra !== null && extra > 0) amount = Math.round((base + extra) * 100) / 100;
+      if (amount === null) {
+        toast('Bitte einen gültigen Betrag eingeben.');
+        return false;
+      }
+      return run(async () => {
+        if (state.overridesMissing) throw new Error('Die Monatsanpassung braucht eine kleine Datenbank-Erweiterung: supabase/migration-monatsanpassung.sql im Supabase SQL Editor ausführen.');
+        if (amount === base) {
+          if (ov) await db.remove('recurring_overrides', ov.id);
+        } else if (ov) await db.update('recurring_overrides', ov.id, { amount });
+        else await db.insert('recurring_overrides', { recurring_id: rec.id, month: monthKey, amount });
+      }, `Gilt nur für ${label}`);
+    },
+    onDelete: ov && (() => run(() => db.remove('recurring_overrides', ov.id), 'Zurückgesetzt')),
+  });
+}
 function recForm(rec, presetType) {
   const type = rec?.type || presetType || 'ausgabe';
   const income = type === 'einnahme';
@@ -2506,6 +2559,7 @@ const actions = {
   addsuggested: () => run(() => db.saveSettings({ categories: [...state.categories, ...suggestedCategories()] }), 'Kategorien hinzugefügt'),
   addrec: (el) => recForm(null, el.dataset.type),
   editrec: (el) => recForm(state.recurring.find((x) => x.id === el.dataset.id)),
+  recmonth: (el) => recMonthForm(state.recurring.find((x) => x.id === el.dataset.id), el.dataset.month),
   addcal: () => calendarForm(),
   editcal: (el) => calendarForm(state.calendars.find((x) => x.id === el.dataset.id)),
   togglecal: (el) => {
