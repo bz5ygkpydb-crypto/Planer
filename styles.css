@@ -917,3 +917,31 @@ body::before {
 .fab-main { border: 1px solid rgba(255, 255, 255, 0.3); }
 html { background: var(--bg); } body { background: transparent; }
 .day.sel .n, .day.today.sel .n { color: #fff; box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--accent) 75%, #000); }
+
+/* =====================================================================
+   Kopfbereich: Hauptumschalter, zweite Zeile und Kalenderauswahl
+   ===================================================================== */
+.page > .seg { margin: 4px 0 14px; }
+.seg { box-shadow: var(--glass-shadow); }
+.seg button { white-space: nowrap; padding: 0 6px; }
+.seg.compact { display: inline-grid; grid-auto-columns: minmax(84px, auto); width: auto; margin: 0; min-height: 42px; }
+.seg.compact button { min-height: 34px; padding: 0 16px; font-size: 13px; }
+
+/* zweite Zeile: Monat/Agenda links, Kalender hinzufügen rechts */
+.subbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.addcal {
+  width: 42px; height: 42px; border-radius: 50%; flex: none; display: grid; place-items: center; padding: 0; color: var(--accent);
+  background: var(--glass-bg); border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(26px) saturate(1.8); backdrop-filter: blur(26px) saturate(1.8);
+}
+.addcal svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+
+/* Kalenderauswahl: kleine, ruhige Kapseln */
+.calchips { gap: 8px; margin: 0 -16px 14px; padding: 2px 16px 6px; }
+.calchip { min-height: 34px; padding: 0 14px 0 12px; gap: 8px; font-size: 13px; font-weight: 600; box-shadow: var(--glass-shadow); }
+.calchip i { width: 8px; height: 8px; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 0%, transparent); }
+.calchip.off { opacity: 0.6; text-decoration: none; }
+.calchip.off span, .calchip.off { color: var(--muted); }
+.calchip.off i { opacity: 0.4; }
+.seg:has(> :nth-child(4)) button { font-size: 12.5px; padding: 0 2px; }
+.seg:has(> :nth-child(4)) { padding: 4px; }

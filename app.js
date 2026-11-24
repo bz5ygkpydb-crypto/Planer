@@ -674,16 +674,17 @@ function viewCal() {
   const cm = calMap();
   const colorOf = (e) => safeColor(cm.get(e.calendar_id)?.color);
   const visible = state.events.filter((e) => isVisibleEv(e, cm));
-  const switcher = `<div class="seg"><button class="${state.calView === 'monat' ? 'on' : ''}" data-a="calview" data-v="monat">Monat</button><button class="${state.calView === 'agenda' ? 'on' : ''}" data-a="calview" data-v="agenda">Agenda</button></div>`;
+  const switcher = `<div class="seg compact"><button class="${state.calView === 'monat' ? 'on' : ''}" data-a="calview" data-v="monat">Monat</button><button class="${state.calView === 'agenda' ? 'on' : ''}" data-a="calview" data-v="agenda">Agenda</button></div>`;
   const chips = state.calendars
     .map((c) => {
       const off = state.hiddenCals.has(c.id);
       return `<button class="calchip ${off ? 'off' : ''}" data-a="togglecal" data-id="${c.id}" aria-pressed="${!off}"><i style="background:${safeColor(c.color)}"></i>${esc(c.name)}</button>`;
     })
     .join('');
-  const chipRow = `<div class="calchips">${chips}<button class="calchip add" data-a="addcal">+ Kalender</button></div>`;
+  const addBtn = '<button class="addcal" data-a="addcal" aria-label="Kalender hinzufügen"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>';
+  const chipRow = `<div class="subbar">${switcher}${addBtn}</div>${chips ? `<div class="calchips">${chips}</div>` : ''}`;
 
-  if (state.calView === 'agenda') return `${head('Kalender', 'Die nächsten 45 Tage')}${switcher}${chipRow}${viewAgenda(cm)}`;
+  if (state.calView === 'agenda') return `${head('Kalender', 'Die nächsten 45 Tage')}${chipRow}${viewAgenda(cm)}`;
 
   const offset = (m.getDay() + 6) % 7;
   const days = monthEnd(m).getDate();
@@ -722,7 +723,7 @@ function viewCal() {
     ${list.length ? `<ul class="evlist">${list.map((e) => evHtml(e, sel, cm)).join('')}</ul>` : '<p class="empty">Keine Termine. Der Tag ist frei.</p>'}
   </section>`;
 
-  return `${head('Kalender')}${switcher}${chipRow}
+  return `${head('Kalender')}${chipRow}
     <div class="calhead mhead"><div><div class="mname">${m.toLocaleDateString('de-DE', { month: 'long' })}</div><div class="myear">${m.getFullYear()}</div></div>
       <div class="calctl"><button class="iconbtn" data-a="calprev" aria-label="Vorheriger Monat">‹</button><button class="pill" data-a="caltoday">Heute</button><button class="iconbtn" data-a="calnext" aria-label="Nächster Monat">›</button></div></div>
     <section class="card calcard"><div class="cal">${cells}</div></section>
