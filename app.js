@@ -50,6 +50,7 @@ function friendlyError(e) {
   if (/not_invited|Database error saving new user/i.test(e?.message)) {
     return 'Diese E-Mail-Adresse ist nicht eingeladen. Bitte die Person, die dich einladen möchte, genau diese Adresse einzutragen.';
   }
+  if (/attachments|Bucket not found|row-level security.*object|belege/i.test(e?.message)) return 'Die Beleg-Funktion braucht eine kleine Datenbank-Erweiterung: supabase/migration-belege.sql im Supabase SQL Editor ausführen.';
   if (/Failed to fetch|NetworkError|Load failed/i.test(e?.message)) return 'Keine Verbindung zum Server.';
   return e?.message || 'Unbekannter Fehler';
 }
@@ -206,6 +207,22 @@ function supaDb() {
       const q = sb.from(table).update(patch);
       return ok(await (value === null ? q.is(col, null) : q.eq(col, value)));
     },
+    // Belege liegen im privaten Speicher "belege", je Konto in einem eigenen Ordner.
+    async uploadFile(file) {
+      const safe = file.name.replace(/[^\w.\-]+/g, '_').slice(-80);
+      const path = `${state.user.id}/${crypto.randomUUID()}-${safe}`;
+      const { error } = await sb.storage.from('belege').upload(path, file, { contentType: file.type || 'application/octet-stream' });
+      if (error) throw error;
+      return { path, name: file.name, type: file.type, size: file.size };
+    },
+    async fileUrl(path) {
+      const { data, error } = await sb.storage.from('belege').createSignedUrl(path, 600);
+      if (error) throw error;
+      return data.signedUrl;
+    },
+    async removeFiles(paths) {
+      if (paths.length) await sb.storage.from('belege').remove(paths);
+    },
     async isOwner() {
       return ok(await sb.rpc('is_owner')) === true;
     },
@@ -218,6 +235,7 @@ function supaDb() {
   };
 }
 
+const demoFiles = new Map();
 function localDb() {
   const KEY = 'planer-demo';
   const read = () => {
@@ -273,6 +291,18 @@ function localDb() {
       for (const r of rows(table)) if ((r[col] ?? null) === value) Object.assign(r, patch);
       write(mem);
     },
+    // Demo: Belege bleiben nur im Arbeitsspeicher dieser Sitzung.
+    async uploadFile(file) {
+      const path = `demo/${crypto.randomUUID()}-${file.name}`;
+      demoFiles.set(path, file);
+      return { path, name: file.name, type: file.type, size: file.size };
+    },
+    async fileUrl(path) {
+      const f = demoFiles.get(path);
+      if (!f) throw new Error('Im Demo-Modus sind Belege nach dem Neuladen weg.');
+      return URL.createObjectURL(f);
+    },
+    async removeFiles() {},
     async isOwner() {
       return false;
     },
@@ -1045,6 +1075,7 @@ function viewAccountDetail() {
       x.source === 'apple_pay' ? 'Apple Pay' : '',
       x.recurringId ? (x.date > t ? 'geplant' : 'fest') : '',
       x.overridden ? 'nur dieser Monat angepasst' : '',
+      Array.isArray(x.attachments) && x.attachments.length ? 'Beleg' : '',
       !x.recurringId && Number(x.amount) === 0 ? 'Betrag fehlt, antippen' : '',
     ].filter(Boolean).join(' · ');
     const target = x.recurringId ? `data-a="recmonth" data-id="${x.recurringId}" data-month="${x.date.slice(0, 7)}"` : `data-a="edittx" data-id="${x.id}"`;
@@ -1196,7 +1227,7 @@ function upcomingCard() {
 // Feste Einnahmen und Ausgaben (Abos, Gehalt, Miete ...). "Bis" leer = unbefristet.
 function recRow(r) {
   const span = r.end_date ? `${fullDate(r.start_date)} bis ${fullDate(r.end_date)}` : `ab ${fullDate(r.start_date)}, unbefristet`;
-  const sub = [INTERVALS[r.interval_months], span, accName(r.account_id), r.category].filter(Boolean).join(' · ');
+  const sub = [INTERVALS[r.interval_months], span, accName(r.account_id), r.category, Array.isArray(r.attachments) && r.attachments.length ? 'Beleg' : ''].filter(Boolean).join(' · ');
   return `<li class="row"><button class="main" data-a="editrec" data-id="${r.id}"><span class="title">${esc(r.name)}</span><span class="sub">${esc(sub)}</span></button>
     <span class="amount ${r.type === 'einnahme' ? 'pos' : 'neg'}">${signedEur(r)}</span></li>`;
 }
@@ -1586,6 +1617,200 @@ function render() {
   updateFab();
 }
 
+
+// ---------- Belege: Foto oder PDF lesen und anhängen ----------
+// Die Texterkennung läuft komplett im Browser (Tesseract.js, pdf.js). Das Bild verlässt dein Gerät dafür nicht.
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.esm.min.js';
+const PDFJS_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.mjs';
+const PDFJS_WORKER = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs';
+const BELEG_MAX = 10 * 1024 * 1024;
+let tesseractLib = null;
+let pdfjsLib = null;
+
+async function ocrCanvas(canvas, onProgress) {
+  tesseractLib ||= import(TESSERACT_URL);
+  const mod = await tesseractLib;
+  const T = mod.default || mod;
+  const worker = await T.createWorker('deu', 1, {
+    logger: (m) => {
+      if (m.status === 'recognizing text') onProgress?.(Math.round(m.progress * 100));
+    },
+  });
+  try {
+    const { data } = await worker.recognize(canvas);
+    return data.text || '';
+  } finally {
+    await worker.terminate();
+  }
+}
+
+// Foto verkleinern, damit die Erkennung auch auf dem Handy zügig läuft.
+async function imageToCanvas(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const s = Math.min(1, 2200 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * s);
+  c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  return c;
+}
+
+// PDF: erst den eingebetteten Text lesen, bei gescannten PDFs die erste Seite als Bild erkennen.
+async function readPdf(file, onProgress) {
+  pdfjsLib ||= import(PDFJS_URL);
+  const pdfjs = await pdfjsLib;
+  pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+  const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  let text = '';
+  for (let p = 1; p <= Math.min(doc.numPages, 3); p++) {
+    const tc = await (await doc.getPage(p)).getTextContent();
+    let lastY = null;
+    for (const it of tc.items) {
+      if (lastY !== null && Math.abs(it.transform[5] - lastY) > 3) text += '\n';
+      else if (lastY !== null) text += ' ';
+      text += it.str;
+      lastY = it.transform[5];
+    }
+    text += '\n';
+  }
+  if (text.replace(/\s/g, '').length >= 20) return text;
+  const page = await doc.getPage(1);
+  const viewport = page.getViewport({ scale: 2 });
+  const c = document.createElement('canvas');
+  c.width = viewport.width;
+  c.height = viewport.height;
+  await page.render({ canvasContext: c.getContext('2d'), viewport }).promise;
+  return ocrCanvas(c, onProgress);
+}
+
+// Aus dem erkannten Text Betrag, Datum, Händler und Einzelheiten herausholen.
+function parseBeleg(raw) {
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.replace(/[ \t]+/g, ' ').trim())
+    .filter(Boolean);
+  const amountRe = /(\d{1,3}(?:[.\s]\d{3})*|\d+)[,.](\d{2})(?!\d)/g;
+  const toNum = (m) => Number(`${m[1].replace(/[.\s]/g, '')}.${m[2]}`);
+  const dateRe = /\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b/g;
+  const amountsIn = (s) => [...s.replace(dateRe, ' ').matchAll(amountRe)].map(toNum).filter((n) => n > 0 && n < 1e6);
+  const strongest = /(gesamt|summe|total|zu zahlen|zahlbetrag|endbetrag|rechnungsbetrag|bruttobetrag)/i;
+  const strong = /(gesamt|summe|total|zu zahlen|zahlbetrag|endbetrag|rechnungsbetrag|bruttobetrag|bar\b|betrag|gegeben|rückgeld)/i;
+  let amount = null;
+  for (const re of [strongest, /betrag/i]) {
+    for (let i = lines.length - 1; i >= 0 && amount === null; i--) {
+      if (!re.test(lines[i]) || /mwst|ust|steuer|netto|r(?:ü|ue)ckgeld|gegeben|zwischen/i.test(lines[i])) continue;
+      const found = amountsIn(lines[i]).concat(amountsIn(lines[i + 1] || ''));
+      if (found.length) amount = found[0];
+    }
+  }
+  if (amount === null) {
+    const all = lines.flatMap(amountsIn);
+    if (all.length) amount = Math.max(...all);
+  }
+  let date = null;
+  const dm = raw.match(/\b(\d{1,2})[./](\d{1,2})[./](\d{4}|\d{2})\b/);
+  if (dm) {
+    const y = dm[3].length === 2 ? `20${dm[3]}` : dm[3];
+    const d = new Date(Number(y), Number(dm[2]) - 1, Number(dm[1]));
+    if (d.getFullYear() === Number(y) && d.getMonth() === Number(dm[2]) - 1) date = iso(d);
+  }
+  const merchant = (lines.find((l) => /[A-Za-zÄÖÜäöüß]{3,}/.test(l) && !/^\d/.test(l) && !/rechnung|kassenbon|beleg|datum/i.test(l)) || '').slice(0, 60);
+  const items = lines.filter((l) => amountsIn(l).length && !strong.test(l) && !/\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b/.test(l) && !/mwst|ust|steuer|netto|r(?:ü|ue)ckgeld|gegeben|tel|iban|bic/i.test(l)).slice(0, 25);
+  const note = items.length ? `Beleg:\n${items.join('\n')}`.slice(0, 1500) : '';
+  return { amount, date, merchant, note };
+}
+
+// Abschnitt "Beleg" für Formulare. Gibt HTML zurück und eine Steuerung zum Anbinden, Hochladen und Aufräumen.
+function belegSection(existing = [], prefill = {}) {
+  let kept = [...existing];
+  let pending = [];
+  const removed = [];
+  let root = null;
+  const status = (t) => {
+    const el = root.querySelector('.beleg-status');
+    el.hidden = !t;
+    el.textContent = t || '';
+  };
+  const renderList = () => {
+    root.querySelector('.beleg-list').innerHTML = [
+      ...kept.map((f) => `<li><button type="button" class="beleg-open" data-a="openfile" data-path="${esc(f.path)}">${esc(f.name)}</button><button type="button" class="beleg-x" data-bel-del="kept" data-path="${esc(f.path)}" aria-label="Entfernen">×</button></li>`),
+      ...pending.map((p, i) => `<li><span class="beleg-new">${esc(p.name)} <small>wird beim Speichern hochgeladen</small></span><button type="button" class="beleg-x" data-bel-del="new" data-i="${i}" aria-label="Entfernen">×</button></li>`),
+    ].join('');
+  };
+  const apply = (form, p) => {
+    const set = (name, value, force) => {
+      const el = form.elements[name];
+      if (el && value && (force || !el.value)) el.value = value;
+    };
+    if (p.amount) set(prefill.amount || 'amount', p.amount.toFixed(2).replace('.', ','), true);
+    set(prefill.merchant || 'merchant', p.merchant, false);
+    set(prefill.date || 'date', p.date, true);
+    if (p.note) {
+      const el = form.elements[prefill.note || 'note'];
+      if (el) el.value = el.value ? `${el.value}\n${p.note}` : p.note;
+    }
+  };
+  const handle = async (form, files) => {
+    for (const file of files) {
+      if (file.size > BELEG_MAX) {
+        toast(`„${file.name}“ ist größer als 10 MB.`);
+        continue;
+      }
+      pending.push(file);
+      renderList();
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      if (!isPdf && !file.type.startsWith('image/')) continue;
+      try {
+        status('Beleg wird gelesen …');
+        const text = isPdf ? await readPdf(file, (n) => status(`Beleg wird gelesen … ${n} %`)) : await ocrCanvas(await imageToCanvas(file), (n) => status(`Beleg wird gelesen … ${n} %`));
+        const p = parseBeleg(text);
+        apply(form, p);
+        status(p.amount || p.merchant ? `Gelesen: ${[p.amount ? eur.format(p.amount) : '', p.merchant, p.date ? fullDate(p.date) : ''].filter(Boolean).join(' · ')} (bitte prüfen)` : 'Nichts Eindeutiges erkannt. Der Beleg wird trotzdem angehängt.');
+      } catch (e) {
+        status('Der Beleg konnte nicht gelesen werden. Er wird trotzdem angehängt.');
+      }
+    }
+  };
+  return {
+    html: `<div class="beleg"><div class="beleg-head"><b>Beleg</b><span>Foto oder PDF, der Betrag wird automatisch gelesen</span></div>
+      <div class="beleg-actions">
+        <label class="btn small"><input type="file" accept="image/*" capture="environment" hidden data-bel="photo">Foto aufnehmen</label>
+        <label class="btn small"><input type="file" accept="image/*,application/pdf" multiple hidden data-bel="file">Foto oder PDF wählen</label>
+      </div><p class="hint beleg-status" hidden></p><ul class="beleg-list"></ul></div>`,
+    attach() {
+      root = $sheet.querySelector('.beleg');
+      const form = $sheet.querySelector('form');
+      renderList();
+      root.addEventListener('change', async (e) => {
+        if (!e.target.dataset.bel) return;
+        const files = [...e.target.files];
+        e.target.value = '';
+        await handle(form, files);
+      });
+      root.addEventListener('click', (e) => {
+        const del = e.target.closest('[data-bel-del]');
+        if (!del) return;
+        if (del.dataset.belDel === 'kept') {
+          const f = kept.find((x) => x.path === del.dataset.path);
+          kept = kept.filter((x) => x !== f);
+          removed.push(f.path);
+        } else pending.splice(Number(del.dataset.i), 1);
+        renderList();
+      });
+    },
+    // Lädt neue Dateien hoch und liefert die neue Liste (oder null, wenn sich nichts geändert hat).
+    async collect() {
+      if (!pending.length && !removed.length) return null;
+      const uploaded = [];
+      for (const f of pending) uploaded.push(await db.uploadFile(f));
+      return [...kept, ...uploaded];
+    },
+    async cleanup() {
+      await db.removeFiles(removed).catch(() => {});
+    },
+  };
+}
+
 // ---------- Formular-Sheet ----------
 function fieldHTML(f) {
   if (Array.isArray(f)) return `<div class="two">${f.map(fieldHTML).join('')}</div>`;
@@ -1854,12 +2079,14 @@ function txAccountFields(tx, defAcc) {
 }
 
 function txForm(tx, preset = {}) {
+  const beleg = belegSection(tx?.attachments || []);
   const inMonth = iso(monthStart(state.finMonth)) === iso(monthStart(new Date()));
   const defAcc = preset.acc || state.accounts.find((a) => a.id === state.lastAcc && a.active)?.id || state.accounts.find((a) => a.active)?.id || '';
   const type0 = tx?.type || preset.type || 'ausgabe';
   openSheet({
     title: tx ? 'Buchung bearbeiten' : 'Neue Buchung',
     text: tx?.type === 'umbuchung' ? 'Eine Umbuchung verschiebt Geld zwischen deinen Konten. Sie zählt nicht als Einnahme oder Ausgabe.' : '',
+    html: beleg.html,
     fields: [
       [
         { name: 'type', label: 'Art', type: 'select', value: type0, options: [['ausgabe', 'Ausgabe'], ['einnahme', 'Einnahme'], ['umbuchung', 'Umbuchung (zwischen Konten)']] },
@@ -1890,7 +2117,7 @@ function txForm(tx, preset = {}) {
               { name: 'end_date', label: 'Bis (leer = unbefristet)', type: 'date', showIf: 'repeat!=0&type!=umbuchung' },
             ],
           ]),
-      { name: 'note', label: 'Notiz', value: tx?.note },
+      { name: 'note', label: 'Notiz', type: 'textarea', value: tx?.note },
     ],
     onSave: (v) => {
       const amount = parseAmount(v.amount);
@@ -1921,7 +2148,10 @@ function txForm(tx, preset = {}) {
           end_date: v.end_date,
         };
         return run(async () => {
+          const att = await beleg.collect();
+          if (att) rec.attachments = att;
           await db.insert('recurring', rec);
+          await beleg.cleanup();
           state.finView = 'planung';
         }, v.type === 'einnahme' ? 'Feste Einnahme gespeichert' : 'Feste Ausgabe gespeichert');
       }
@@ -1931,13 +2161,20 @@ function txForm(tx, preset = {}) {
       row.to_account_id = v.type === 'umbuchung' ? v.to_account_id : null;
       if (v.type === 'umbuchung') row.category = null;
       return run(async () => {
+        const att = await beleg.collect();
+        if (att) row.attachments = att;
         if (tx) await db.update('transactions', tx.id, row);
         else await db.insert('transactions', { ...row, source: 'manuell' });
+        await beleg.cleanup();
         state.finMonth = monthStart(parseISO(v.date));
       }, 'Gespeichert');
     },
-    onDelete: tx && (() => run(() => db.remove('transactions', tx.id), 'Gelöscht')),
+    onDelete: tx && (() => run(async () => {
+      await db.remove('transactions', tx.id);
+      await db.removeFiles((tx.attachments || []).map((f) => f.path)).catch(() => {});
+    }, 'Gelöscht')),
   });
+  beleg.attach();
 }
 
 // Betrag eines festen Postens nur für einen Monat ändern (z. B. Weihnachtsgeld obendrauf).
@@ -1981,6 +2218,7 @@ function recMonthForm(rec, ym) {
   });
 }
 function recForm(rec, presetType) {
+  const beleg = belegSection(rec?.attachments || [], { merchant: 'name' });
   const type = rec?.type || presetType || 'ausgabe';
   const income = type === 'einnahme';
   const defAcc = rec ? rec.account_id : state.accounts.find((a) => a.active && a.kind === 'giro')?.id || state.accounts.find((a) => a.active)?.id || '';
@@ -1989,6 +2227,7 @@ function recForm(rec, presetType) {
     text: income
       ? '„Bis“ ist der letzte Tag, an dem du diese Einnahme bekommst, z. B. bis zum Jobwechsel. Ohne „Bis“ läuft sie unbefristet. Eine neue Stelle trägst du als weitere Einnahme mit „Von“ ein.'
       : 'Mit „Bis“ endet die Ausgabe an diesem Tag und fällt danach automatisch weg. Ohne „Bis“ läuft sie unbefristet.',
+    html: beleg.html,
     fields: [
       { name: 'name', label: 'Bezeichnung', required: true, value: rec?.name, placeholder: income ? 'z. B. Gehalt, Kindergeld' : 'z. B. Netflix, Miete, Handyvertrag' },
       [
@@ -2016,10 +2255,19 @@ function recForm(rec, presetType) {
         return false;
       }
       const row = { ...v, amount, interval_months: Number(v.interval_months) };
-      return run(() => (rec ? db.update('recurring', rec.id, row) : db.insert('recurring', row)), 'Gespeichert');
+      return run(async () => {
+        const att = await beleg.collect();
+        if (att) row.attachments = att;
+        await (rec ? db.update('recurring', rec.id, row) : db.insert('recurring', row));
+        await beleg.cleanup();
+      }, 'Gespeichert');
     },
-    onDelete: rec && (() => run(() => db.remove('recurring', rec.id), 'Gelöscht')),
+    onDelete: rec && (() => run(async () => {
+      await db.remove('recurring', rec.id);
+      await db.removeFiles((rec.attachments || []).map((f) => f.path)).catch(() => {});
+    }, 'Gelöscht')),
   });
+  beleg.attach();
 }
 
 // Kontostand: "12.345,67", bei anderen Konten auch mit Minus (Dispo).
@@ -2559,6 +2807,17 @@ const actions = {
   addsuggested: () => run(() => db.saveSettings({ categories: [...state.categories, ...suggestedCategories()] }), 'Kategorien hinzugefügt'),
   addrec: (el) => recForm(null, el.dataset.type),
   editrec: (el) => recForm(state.recurring.find((x) => x.id === el.dataset.id)),
+  openfile: async (el) => {
+    const w = window.open('', '_blank');
+    try {
+      const url = await db.fileUrl(el.dataset.path);
+      if (w) w.location = url;
+      else location.href = url;
+    } catch (e) {
+      w?.close();
+      toast(friendlyError(e));
+    }
+  },
   recmonth: (el) => recMonthForm(state.recurring.find((x) => x.id === el.dataset.id), el.dataset.month),
   addcal: () => calendarForm(),
   editcal: (el) => calendarForm(state.calendars.find((x) => x.id === el.dataset.id)),

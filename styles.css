@@ -945,3 +945,22 @@ html { background: var(--bg); } body { background: transparent; }
 .calchip.off i { opacity: 0.4; }
 .seg:has(> :nth-child(4)) button { font-size: 12.5px; padding: 0 2px; }
 .seg:has(> :nth-child(4)) { padding: 4px; }
+
+/* Beleg-Abschnitt im Formular */
+.beleg { margin: 0 0 16px; padding: 14px; border-radius: 18px; background: var(--soft); border: 1px solid var(--line); }
+.beleg-head { display: grid; gap: 2px; margin-bottom: 12px; }
+.beleg-head b { font-size: 15px; font-weight: 600; }
+.beleg-head span { font-size: 13px; color: var(--muted); }
+.beleg-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.beleg-actions .btn { cursor: pointer; flex: 1; min-width: 140px; }
+.beleg-status { margin: 10px 0 0; }
+.beleg-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.beleg-list:empty { display: none; }
+.beleg-list li { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); font-size: 14px; }
+.beleg-open { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.beleg-new { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.beleg-new small { color: var(--muted); }
+.beleg-x { background: none; border: 0; color: var(--muted); font-size: 20px; line-height: 1; padding: 0 6px; }
+.beleg-list li { min-width: 0; max-width: 100%; }
+.beleg-new small { display: block; }
+.beleg-list li > span, .beleg-list li > button:first-child { overflow-wrap: anywhere; }
