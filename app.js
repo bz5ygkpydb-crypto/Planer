@@ -516,7 +516,10 @@ const FAB_ITEMS = [
 const visibleTabs = () => TABS.filter(([id]) => id === 'mehr' || shown(`tab:${id}`));
 function buildBar() {
   const tabs = visibleTabs();
-  $bar.innerHTML = `<nav style="--n:${tabs.length}"><i class="ind"></i>${tabs.map(([id, label]) => `<button class="tab" data-a="tab" data-tab="${id}">${ICONS[id]}<span>${label}</span></button>`).join('')}</nav>`;
+  $bar.innerHTML = `<nav style="--n:${tabs.length}"><i class="ind"></i>
+    <div class="side-brand"><i></i><b>Planer</b></div><div class="side-label">Navigation</div>
+    ${tabs.map(([id, label]) => `<button class="tab" data-a="tab" data-tab="${id}">${ICONS[id]}<span>${label}</span><em class="cnt"></em></button>`).join('')}
+    <div class="side-label cal-label">Kalender</div><div class="side-cals"></div></nav>`;
 }
 buildBar();
 $fab.innerHTML = `<div class="fab-menu">${FAB_ITEMS.map(([k, label, icon], i) => `<button class="fab-item" style="--d:${(FAB_ITEMS.length - 1 - i) * 45}" data-a="fabadd" data-k="${k}">${icon}${label}</button>`).join('')}</div>
@@ -532,6 +535,37 @@ function updateBar() {
     b.classList.toggle('on', j === i);
     b.setAttribute('aria-current', j === i ? 'page' : 'false');
   });
+  updateSide();
+}
+
+// Zahlen neben den Reitern und die Kalenderliste in der Seitenleiste (Laptop).
+function updateSide() {
+  const t = today();
+  const cm = calMap();
+  const dueTodos = state.todos.filter((x) => !x.done && x.due_date && x.due_date <= t).length;
+  const todayEv = state.agenda.filter((e) => isVisibleEv(e, cm) && evCovers(e, t)).length;
+  const counts = {
+    heute: todayEv + dueTodos,
+    planer: state.todos.filter((x) => !x.done).length,
+    jobs: state.jobs.filter((j) => j.status === 'Neu').length,
+  };
+  $bar.querySelectorAll('.tab').forEach((b) => {
+    const n = counts[b.dataset.tab];
+    const el = b.querySelector('.cnt');
+    if (el) el.textContent = n ? String(n) : '';
+  });
+  const box = $bar.querySelector('.side-cals');
+  if (box) {
+    const per = new Map();
+    for (const e of state.events) per.set(e.calendar_id, (per.get(e.calendar_id) || 0) + 1);
+    box.innerHTML = state.calendars
+      .map((c) => {
+        const off = state.hiddenCals.has(c.id);
+        return `<button class="side-cal ${off ? 'off' : ''}" data-a="togglecal" data-id="${c.id}" aria-pressed="${!off}"><i style="background:${safeColor(c.color)}"></i><span>${esc(c.name)}</span><em>${per.get(c.id) || ''}</em></button>`;
+      })
+      .join('');
+    $bar.querySelector('.cal-label').hidden = !state.calendars.length;
+  }
 }
 function updateFab() {
   $fab.hidden = state.tab === 'mehr';
@@ -623,6 +657,12 @@ function todoRow(x) {
     <span class="prio ${x.priority}">${PRIO_LABEL[x.priority]}</span></li>`;
 }
 
+// Kleines Kalenderblatt als Objekt im Hero.
+function heroObject(date) {
+  const d = parseISO(date);
+  return `<div class="hero-obj" aria-hidden="true"><div class="cal-obj back"></div><div class="cal-obj"><i>${d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', '')}</i><b>${d.getDate()}</b><small>${d.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', '')}</small></div></div>`;
+}
+
 function viewToday() {
   const t = today();
   const now = new Date();
@@ -647,10 +687,10 @@ function viewToday() {
       when = `Heute · ${st} Uhr · ${mins < 60 ? `in ${mins} Min.` : `in ${Math.floor(mins / 60)} Std. ${mins % 60 ? `${mins % 60} Min.` : ''}`}`;
     } else when = `${relDay(nxt.date)} · ${st ? `${st} Uhr` : 'ganztägig'}`;
     hero = `<section class="hero"><div class="hero-k">Als Nächstes</div><div class="hero-t">${esc(nxt.title)}</div><div class="hero-s">${esc(when)}</div>
-      <div class="hero-b"><button data-a="goday" data-date="${isToday ? t : nxt.date}">Im Kalender ansehen</button></div></section>`;
+      <div class="hero-b"><button data-a="goday" data-date="${isToday ? t : nxt.date}">Im Kalender ansehen</button></div>${heroObject(isToday ? t : nxt.date)}</section>`;
   } else {
     hero = `<section class="hero"><div class="hero-k">Als Nächstes</div><div class="hero-t">Alles ruhig</div><div class="hero-s">In den nächsten Wochen steht nichts an.</div>
-      <div class="hero-b"><button data-a="fabadd" data-k="event">Termin anlegen</button></div></section>`;
+      <div class="hero-b"><button data-a="fabadd" data-k="event">Termin anlegen</button></div>${heroObject(t)}</section>`;
   }
 
   // To-Dos: überfällig oder heute fällig
@@ -664,6 +704,10 @@ function viewToday() {
   const mTo = iso(monthEnd(cur));
   const monthAll = [...state.hist.filter((x) => x.date >= mFrom && x.date <= mTo), ...recurringFor(cur)];
   const spent = monthFigures(cur, state.hist.filter((x) => x.date >= mFrom && x.date <= mTo)).fixExp;
+  const soon7 = ev.filter((e) => e.date > t && e.date <= addDaysISO(7)).length;
+  const overdueN = dueTodos.filter((x) => x.due_date < t).length;
+  const prevFix = monthFigures(addMonths(cur, -1), []).fixExp;
+  const spentDelta = prevFix > 0 ? `<i class="${spent > prevFix ? 'neg' : 'pos'}">${spent > prevFix ? '+' : '−'}${Math.round((Math.abs(spent - prevFix) / prevFix) * 100)} %</i> ggü. Vormonat` : 'Kein Vergleich';
   const bals = balancesNow();
   const bud = budgetNow();
   const soon = upcomingRecurring(7).slice(0, 3);
@@ -687,9 +731,9 @@ function viewToday() {
   return `${head('Heute', dayLabel(t))}
     ${shown('h:hero') ? hero : ''}
     ${shown('h:tiles') ? `<div class="tiles">
-      <button class="tile" data-a="goday" data-date="${t}"><b>${todayEv.length}</b><span>Termine heute</span></button>
-      <button class="tile" data-a="goplaner" data-pv="todos"><b>${dueTodos.length}</b><span>Heute fällig</span></button>
-      <button class="tile" data-a="tab" data-tab="finanzen"><b>${eur.format(spent).replace(/,00(?=\s)/, '')}</b><span>Feste Ausgaben</span></button>
+      <button class="tile" data-a="goday" data-date="${t}"><b>${todayEv.length}</b><span>Termine heute</span><small class="delta">${soon7 ? `${soon7} in 7 Tagen` : 'Sonst nichts'}</small></button>
+      <button class="tile" data-a="goplaner" data-pv="todos"><b>${dueTodos.length}</b><span>Heute fällig</span><small class="delta">${overdueN ? `<i class="neg">${overdueN}</i> überfällig` : 'Alles aktuell'}</small></button>
+      <button class="tile" data-a="tab" data-tab="finanzen"><b>${eur.format(spent).replace(/,00(?=\s)/, '')}</b><span>Feste Ausgaben</span><small class="delta">${spentDelta}</small></button>
     </div>` : ''}
     ${shown('h:termine') ? `<section class="card"><h2>Termine heute</h2>${evRows ? `<ul class="list">${evRows}</ul>` : '<p class="empty">Keine Termine heute. Der Tag ist frei.</p>'}</section>` : ''}
     ${shown('h:todos') ? `<section class="card"><h2>Zu erledigen</h2>
@@ -1108,7 +1152,7 @@ const eur0 = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR'
 const secHead = (title, right = '') => `<div class="sec"><h3>${title}</h3>${right}</div>`;
 
 // ---------- Diagramme (SVG, ohne Bibliothek) ----------
-const CHART_COLORS = ['var(--accent)', '#14b8a6', 'var(--gold)', '#8b6cf0', '#64748b', '#e0803a', '#94a3b8'];
+const CHART_COLORS = ['#f5c542', '#4ade80', '#60a5fa', '#f472b6', '#a78bfa', '#fb923c', '#94a3b8'];
 
 // Kreisdiagramm: größte Kategorien einzeln, der Rest als "Weitere".
 function donutChart(list, total) {
@@ -1135,34 +1179,46 @@ function donutChart(list, total) {
     <div class="mid"><b>${eur0.format(total)}</b><span>Gesamt</span></div></div><div class="legend">${legend}</div></div>`;
 }
 
-// Balken je Monat: Einnahmen (Akzent) und Ausgaben (Messing).
+// Liniendiagramm je Monat: Einnahmen und Ausgaben als weiche, leicht leuchtende Kurven.
 function monthBars(data, label) {
-  const W = 320;
-  const H = 150;
-  const padL = 34;
-  const padB = 20;
+  const W = 360;
+  const H = 170;
+  const padL = 40;
+  const padB = 22;
+  const padT = 10;
   const max = Math.max(1, ...data.flatMap((d) => [d.inc, d.exp]));
   const nice = Math.pow(10, Math.floor(Math.log10(max)));
   const top = Math.ceil(max / nice) * nice;
-  const ph = H - padB - 6;
-  const slot = (W - padL) / data.length;
-  const bw = Math.min(14, slot / 2 - 3);
-  const y = (v) => 6 + ph - (v / top) * ph;
-  const grid = [0, 0.5, 1]
-    .map((f) => `<line class="gl" x1="${padL}" x2="${W}" y1="${y(top * f).toFixed(1)}" y2="${y(top * f).toFixed(1)}"/><text class="y" x="${padL - 6}" y="${(y(top * f) + 3).toFixed(1)}">${num0.format(top * f)}</text>`)
+  const ph = H - padB - padT;
+  const step = (W - padL - 12) / Math.max(1, data.length - 1);
+  const X = (i) => padL + step * i;
+  const Y = (v) => padT + ph - (v / top) * ph;
+  const fmtK = (v) => (v >= 1000 ? `${num0.format(v / 1000)}k` : num0.format(v));
+  // Weiche Kurve durch alle Punkte (Catmull-Rom als Bezier).
+  const path = (vals) => {
+    const pts = vals.map((v, i) => [X(i), Y(v)]);
+    let p = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2] || p2;
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      p += ` C${c1[0].toFixed(1)},${c1[1].toFixed(1)} ${c2[0].toFixed(1)},${c2[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    return p;
+  };
+  const grid = [0, 0.25, 0.5, 0.75, 1]
+    .map((f) => `<line class="gl" x1="${padL}" x2="${W}" y1="${Y(top * f).toFixed(1)}" y2="${Y(top * f).toFixed(1)}"/><text class="y" x="${padL - 8}" y="${(Y(top * f) + 3).toFixed(1)}">${fmtK(top * f)}</text>`)
     .join('');
-  const cols = data
-    .map((d, i) => {
-      const cx = padL + slot * i + slot / 2;
-      const hi = (d.inc / top) * ph;
-      const he = (d.exp / top) * ph;
-      return `<rect class="bi" x="${(cx - bw - 1).toFixed(1)}" y="${(6 + ph - hi).toFixed(1)}" width="${bw}" height="${hi.toFixed(1)}" rx="3" style="animation-delay:${i * 60}ms"/>
-        <rect class="be" x="${(cx + 1).toFixed(1)}" y="${(6 + ph - he).toFixed(1)}" width="${bw}" height="${he.toFixed(1)}" rx="3" style="animation-delay:${i * 60 + 80}ms"/>
-        <text x="${cx.toFixed(1)}" y="${H - 5}">${label(d.m)}</text>`;
-    })
-    .join('');
-  return `<div class="chart"><svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Einnahmen und Ausgaben der letzten 6 Monate">${grid}${cols}</svg>
-    <div class="chartkey"><span><i style="background:var(--accent)"></i>Einnahmen</span><span><i style="background:var(--gold)"></i>Ausgaben</span></div></div>`;
+  const xs = data.map((d, i) => `<text x="${X(i).toFixed(1)}" y="${H - 6}">${label(d.m)}</text>`).join('');
+  const dots = (vals, cls) => vals.map((v, i) => `<circle class="pt ${cls}" cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="2.6"/>`).join('');
+  const inc = data.map((d) => d.inc);
+  const exp = data.map((d) => d.exp);
+  return `<div class="chart"><svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Einnahmen und Ausgaben der letzten 6 Monate">${grid}${xs}
+    <path class="ln ln-exp" d="${path(exp)}" pathLength="1"/><path class="ln ln-inc" d="${path(inc)}" pathLength="1"/>${dots(exp, 'exp')}${dots(inc, 'inc')}</svg>
+    <div class="chartkey"><span><i class="k-inc"></i>Einnahmen</span><span><i class="k-exp"></i>Ausgaben</span></div></div>`;
 }
 
 function viewFinOverview() {
@@ -2597,9 +2653,9 @@ const ACCENTS = [
 ];
 function getLook() {
   try {
-    return { accent: localStorage.getItem('planer-accent') || '', theme: localStorage.getItem('planer-theme') || 'auto', view: localStorage.getItem('planer-view') || 'auto' };
+    return { accent: localStorage.getItem('planer-accent') || '', theme: localStorage.getItem('planer-theme') || 'dark', view: localStorage.getItem('planer-view') || 'auto' };
   } catch {
-    return { accent: '', theme: 'auto', view: 'auto' };
+    return { accent: '', theme: 'dark', view: 'auto' };
   }
 }
 function applyLook() {
