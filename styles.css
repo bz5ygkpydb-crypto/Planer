@@ -668,3 +668,37 @@ details summary { font-weight: 700; cursor: pointer; padding: 4px 0; }
 .docsbox .dl { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
 .docsbox .dl b { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; }
 .docsbox .dl span { word-break: break-word; }
+
+
+/* ---------- Laptop-Layout (Seitenleiste, breiterer Inhalt) ---------- */
+:root[data-layout="laptop"] #app { max-width: 1040px; padding: 0 32px 48px 248px; }
+:root[data-layout="laptop"] .head { margin: 0 -32px 14px; padding-left: 32px; padding-right: 32px; }
+:root[data-layout="laptop"] #bar {
+  left: 20px; right: auto; top: 20px; bottom: 20px; width: 208px; max-width: none; margin: 0;
+  display: flex; flex-direction: column;
+}
+:root[data-layout="laptop"] #bar nav {
+  display: flex; flex-direction: column; gap: 4px; padding: 12px 10px; border-radius: 24px; height: 100%;
+}
+:root[data-layout="laptop"] #bar .ind { display: none; }
+:root[data-layout="laptop"] .tab {
+  flex-direction: row; justify-content: flex-start; gap: 12px; height: 46px; padding: 0 14px; border-radius: 14px; font-size: 14.5px;
+}
+:root[data-layout="laptop"] .tab.on { background: var(--accent-soft); }
+:root[data-layout="laptop"] .tab.on svg { transform: none; }
+:root[data-layout="laptop"] .tab:last-child { margin-top: auto; }
+:root[data-layout="laptop"] .tab:hover:not(.on) { background: var(--soft); }
+:root[data-layout="laptop"] #fab { right: 32px; bottom: 32px; }
+:root[data-layout="laptop"] .tiles { grid-template-columns: repeat(4, 1fr); }
+:root[data-layout="laptop"] dialog#sheet { margin: auto; border-radius: 28px; max-width: 600px; }
+
+/* Laptop: breitere Inhalte in Spalten */
+:root[data-layout="laptop"] .page[data-view="heute"] { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; align-items: start; }
+:root[data-layout="laptop"] .page[data-view="heute"] > .head,
+:root[data-layout="laptop"] .page[data-view="heute"] > .hero,
+:root[data-layout="laptop"] .page[data-view="heute"] > .tiles { grid-column: 1 / -1; }
+:root[data-layout="laptop"] .joblist { grid-template-columns: 1fr 1fr; }
+:root[data-layout="laptop"] .jobfilters { grid-template-columns: repeat(5, 1fr); }
+:root[data-layout="laptop"] .stats { grid-template-columns: repeat(4, 1fr); }
+:root[data-layout="laptop"] .minicards { flex-wrap: wrap; overflow: visible; }
+:root[data-layout="laptop"] .card h2 { font-size: 13px; }
