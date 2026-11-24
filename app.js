@@ -634,8 +634,6 @@ function viewToday() {
     })
     .join('');
 
-  const hour = now.getHours();
-  const greeting = hour < 5 ? 'Gute Nacht' : hour < 11 ? 'Guten Morgen' : hour < 17 ? 'Guten Tag' : 'Guten Abend';
   const evRows = todayEv
     .map((e) => {
       const st = e.start_time?.slice(0, 5);
@@ -644,16 +642,16 @@ function viewToday() {
     })
     .join('');
 
-  return `${head(greeting, dayLabel(t))}
+  return `${head('Heute', dayLabel(t))}
     ${shown('h:hero') ? hero : ''}
     ${shown('h:tiles') ? `<div class="tiles">
       <button class="tile" data-a="goday" data-date="${t}"><b>${todayEv.length}</b><span>Termine heute</span></button>
       <button class="tile" data-a="goplaner" data-pv="todos"><b>${dueTodos.length}</b><span>Heute fällig</span></button>
       <button class="tile" data-a="tab" data-tab="finanzen"><b>${eur.format(spent).replace(/,00(?=\s)/, '')}</b><span>Feste Ausgaben</span></button>
     </div>` : ''}
-    ${shown('h:termine') ? `<section class="card"><h2>Termine heute</h2>${evRows ? `<ul class="list">${evRows}</ul>` : '<p class="empty">Keine Termine heute. Genieß den freien Tag ✨</p>'}</section>` : ''}
+    ${shown('h:termine') ? `<section class="card"><h2>Termine heute</h2>${evRows ? `<ul class="list">${evRows}</ul>` : '<p class="empty">Keine Termine heute. Der Tag ist frei.</p>'}</section>` : ''}
     ${shown('h:todos') ? `<section class="card"><h2>Zu erledigen</h2>
-      ${dueTodos.length ? `<ul class="list">${dueTodos.slice(0, 5).map(todoRow).join('')}</ul>` : '<p class="empty">Nichts fällig. Alles im grünen Bereich ✅</p>'}
+      ${dueTodos.length ? `<ul class="list">${dueTodos.slice(0, 5).map(todoRow).join('')}</ul>` : '<p class="empty">Nichts fällig. Alles erledigt.</p>'}
       ${dueTodos.length > 5 ? `<p class="hint" style="margin:8px 0 0">+ ${dueTodos.length - 5} weitere unter „To-Dos“.</p>` : ''}
     </section>` : ''}
     ${shown('h:geld') ? `<section class="card"><h2>Geld</h2>
@@ -721,7 +719,7 @@ function viewCal() {
       <div><div class="dname">${sd.toLocaleDateString('de-DE', { weekday: 'long' })}</div>
       <div class="dsub">${sd.toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })} · ${relDay(sel)}${list.length ? ` · ${list.length} Termin${list.length > 1 ? 'e' : ''}` : ''}</div></div>
       <button class="btn small primary" data-a="addevent">+ Termin</button></div>
-    ${list.length ? `<ul class="evlist">${list.map((e) => evHtml(e, sel, cm)).join('')}</ul>` : '<p class="empty">Keine Termine. Ein freier Tag ✨</p>'}
+    ${list.length ? `<ul class="evlist">${list.map((e) => evHtml(e, sel, cm)).join('')}</ul>` : '<p class="empty">Keine Termine. Der Tag ist frei.</p>'}
   </section>`;
 
   return `${head('Kalender')}${switcher}${chipRow}
@@ -740,7 +738,7 @@ function viewAgenda(cm) {
     if (!groups.has(day)) groups.set(day, []);
     groups.get(day).push(e);
   }
-  if (!groups.size) return '<section class="card empty-card"><span class="emoji">🌤️</span><b>Nichts geplant</b><p>In den nächsten 45 Tagen stehen keine Termine an.</p></section>';
+  if (!groups.size) return '<section class="card empty-card"><b>Nichts geplant</b><p>In den nächsten 45 Tagen stehen keine Termine an.</p></section>';
   return `<div class="agenda">${[...groups.entries()]
     .map(
       ([day, evs]) => `<div class="agenda-day">${relDay(day)} <small>${dayLabel(day)}</small></div><ul class="evlist">${evs.map((e) => evHtml(e, day, cm)).join('')}</ul>`,
@@ -804,7 +802,7 @@ function viewTodos() {
   const ring = `<div class="ring" title="${doneAll.length} von ${total} erledigt"><svg viewBox="0 0 46 46"><circle class="bg" cx="23" cy="23" r="20"/><circle class="fg" cx="23" cy="23" r="20" style="stroke-dashoffset:${(125.7 * (1 - ratio)).toFixed(1)}"/></svg><b>${Math.round(ratio * 100)}%</b></div>`;
   const opt = (v, l) => `<option value="${v}" ${state.prioFilter === v ? 'selected' : ''}>${l}</option>`;
   const empty = !open.length
-    ? `<section class="card empty-card"><span class="emoji">${openAll.length ? '🔎' : '🎉'}</span><b>${openAll.length ? 'Nichts mit diesem Filter' : 'Alles erledigt'}</b><p>${openAll.length ? 'Wähle oben eine andere Liste oder Priorität.' : 'Du hast keine offenen To-Dos.'}</p></section>`
+    ? `<section class="card empty-card"><b>${openAll.length ? 'Nichts mit diesem Filter' : 'Alles erledigt'}</b><p>${openAll.length ? 'Wähle oben eine andere Liste oder Priorität.' : 'Du hast keine offenen To-Dos.'}</p></section>`
     : '';
 
   const cnt = (id) => openAll.filter((x) => (id === 'alle' ? true : id === 'none' ? !listOf(x) : x.list_id === id)).length;
@@ -1264,7 +1262,7 @@ function jobCard(j) {
   const place = [j.company, j.city || j.location].filter(Boolean).join(' · ');
   const chips = [
     j.fit ? `<span class="jchip fit-${esc(j.fit)}">${esc(j.fit)}</span>` : '',
-    j.docs_status === 'angefordert' || j.docs_status === 'in_arbeit' ? '<span class="jchip docs">⏳ Unterlagen werden erstellt</span>' : j.docs_status === 'bereit' ? '<span class="jchip docs">📄 Unterlagen bereit</span>' : j.docs_status === 'beworben' ? '<span class="jchip docs">✓ Beworben</span>' : '',
+    j.docs_status === 'angefordert' || j.docs_status === 'in_arbeit' ? '<span class="jchip docs">Unterlagen werden erstellt</span>' : j.docs_status === 'bereit' ? '<span class="jchip docs">📄 Unterlagen bereit</span>' : j.docs_status === 'beworben' ? '<span class="jchip docs">✓ Beworben</span>' : '',
     j.job_type ? `<span class="jchip">${esc(j.job_type)}</span>` : '',
     state.jobSeg === 'alle' ? `<span class="jchip st">${esc(j.status)}</span>` : '',
     dlText ? `<span class="jchip ${dl !== null && dl >= 0 && dl <= 7 ? 'warn' : ''}">${esc(dlText)}</span>` : '',
@@ -1311,7 +1309,7 @@ function viewJobs() {
   parts.push(
     list.length
       ? `<ul class="joblist">${visible.map(jobCard).join('')}</ul>${list.length > visible.length ? `<button class="btn block" data-a="jobmore">Mehr anzeigen (${list.length - visible.length})</button>` : ''}`
-      : `<section class="card empty-card"><span class="emoji">${all.length ? '🔎' : '💼'}</span><b>${all.length ? 'Keine Stellen mit diesem Filter' : 'Noch keine Stellen'}</b><p>${all.length ? 'Ändere oben den Filter.' : 'Hier erscheinen die täglich gefundenen Finance-Stellen.'}</p></section>`,
+      : `<section class="card empty-card"><b>${all.length ? 'Keine Stellen mit diesem Filter' : 'Noch keine Stellen'}</b><p>${all.length ? 'Ändere oben den Filter.' : 'Hier erscheinen die täglich gefundenen Finance-Stellen.'}</p></section>`,
   );
   return `${head('Bewerbungen', `${all.length} Stellen · ${list.length} in dieser Ansicht`)}${parts.join('')}`;
 }
