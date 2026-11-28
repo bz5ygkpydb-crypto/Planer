@@ -946,10 +946,9 @@ function monthFigures(month, txList) {
   const fixInc = fixedInc.reduce((s, x) => s + Number(x.amount), 0);
   const fixExp = sumOf(all, 'ausgabe');
   const amts = fixedInc.map((x) => Number(x.amount));
-  const extra = txList
-    .filter((x) => x.type === 'einnahme' && x.category !== NO_PLAN && !onCard(x) && !amts.includes(Number(x.amount)))
-    .reduce((s, x) => s + Number(x.amount), 0);
-  return { fixInc, fixExp, extra, income: fixInc + extra, saldo: fixInc + extra - fixExp };
+  const extraList = txList.filter((x) => x.type === 'einnahme' && x.category !== NO_PLAN && !onCard(x) && !amts.includes(Number(x.amount)));
+  const extra = extraList.reduce((s, x) => s + Number(x.amount), 0);
+  return { fixInc, fixExp, extra, income: fixInc + extra, saldo: fixInc + extra - fixExp, all, fixedInc, extraList };
 }
 
 // ---------- Konten als Karten, Budget, Schulden ----------
@@ -1001,6 +1000,12 @@ function accountsRow() {
 
 // Budget: "Frei verfügbar" ist das noch freie Kreditlimit der Kreditkarte (Advanzia), mit der du bezahlst.
 // Die Kacheln zeigen alle Konten zusammen, die offenen Schulden, die Fixkosten des Monats und was nach Fixkosten und Einnahmen übrig bleibt.
+// Die Zahlen des laufenden Monats, wie sie die Kacheln und ihre Detailansicht zeigen.
+function curFigures() {
+  const cur = monthStart(new Date());
+  return monthFigures(cur, state.hist.filter((x) => x.date >= iso(cur) && x.date <= iso(monthEnd(cur))));
+}
+
 function budgetNow() {
   const bals = balancesNow();
   const act = state.accounts.filter((a) => a.active);
@@ -1010,8 +1015,7 @@ function budgetNow() {
   const free = cards.reduce((s, a) => s + (Number(a.credit_limit) || 0) + bals.get(a.id).value, 0);
   const openDebts = state.debts.filter((d) => !d.paid);
   const debt = openDebts.reduce((s, d) => s + Number(d.amount), 0);
-  const cur = monthStart(new Date());
-  const fig = monthFigures(cur, state.hist.filter((x) => x.date >= iso(cur) && x.date <= iso(monthEnd(cur))));
+  const fig = curFigures();
   return { cash, free, cardName: cards[0]?.name || '', hasLimit: cards.some((a) => Number(a.credit_limit) > 0), debt, debtCount: openDebts.length, fixExp: fig.fixExp, left: fig.saldo };
 }
 
@@ -1020,16 +1024,52 @@ function budgetHero() {
   if (!state.accounts.some((a) => a.active)) {
     return `<section class="budget"><div class="hero-k">Frei verfügbar</div><div class="budget-n">–</div><div class="hero-s">Lege dein erstes Konto an, dann rechnet die App dein Budget aus.</div></section>`;
   }
-  const chip = (label, v, sign) => `<div><span>${label}</span><b>${sign}${eur0.format(Math.abs(v))}</b></div>`;
+  const chip = (id, label, v, sign) => `<button data-a="fintile" data-v="${id}" aria-haspopup="dialog"><span>${label}</span><b>${sign}${eur0.format(Math.abs(v))}</b></button>`;
   return `<section class="budget"><div class="hero-k">Frei verfügbar</div>
     <div class="budget-n">${eur.format(b.free)}</div>
     <div class="budget-sub">${b.hasLimit ? `Noch freies Limit · ${esc(b.cardName)}` : 'Lege bei deiner Kreditkarte ein Kreditlimit fest'}</div>
     <div class="budget-chips two">
-      ${chip('Konten gesamt', b.cash, b.cash < 0 ? '−' : '+')}
-      ${chip(`Schulden${b.debtCount ? ` (${b.debtCount})` : ''}`, b.debt, '−')}
-      ${chip('Fixkosten im Monat', b.fixExp, '−')}
-      ${chip('Übrig nach Fixkosten', b.left, b.left < 0 ? '−' : '+')}
+      ${chip('konten', 'Konten gesamt', b.cash, b.cash < 0 ? '−' : '+')}
+      ${chip('schulden', `Schulden${b.debtCount ? ` (${b.debtCount})` : ''}`, b.debt, '−')}
+      ${chip('fix', 'Fixkosten im Monat', b.fixExp, '−')}
+      ${chip('uebrig', 'Übrig nach Fixkosten', b.left, b.left < 0 ? '−' : '+')}
     </div></section>`;
+}
+
+// Antippen einer Kachel öffnet ein Blatt mit der Aufschlüsselung. Die Seite darunter bleibt, wie sie ist.
+function finTile(id) {
+  const money = (v) => `${v < 0 ? '−' : '+'}${eur.format(Math.abs(v))}`;
+  const row = (title, sub, v) => `<li class="row"><div class="main"><span class="title">${esc(title)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</div><span class="amount ${v > 0 ? 'pos' : ''}">${money(v)}</span></li>`;
+  const list = (rows, empty) => (rows.length ? `<ul class="list">${rows.join('')}</ul>` : `<p class="hint">${empty}</p>`);
+  const total = (label, v) => `<p class="sumline"><span>${label}</span><b>${money(v)}</b></p>`;
+  const bySize = (a, b) => Number(b.amount) - Number(a.amount);
+  const item = (x, sign) => row(x.merchant || x.note || x.category || 'Ohne Namen', [x.category, shortDate(x.date), accName(x.account_id)].filter(Boolean).join(' · '), sign * Number(x.amount));
+  const fig = curFigures();
+  const fixed = fig.all.filter((x) => x.type === 'ausgabe').sort(bySize);
+  const month = monthLabel(monthStart(new Date()));
+  let title;
+  let html;
+  if (id === 'konten') {
+    const bals = balancesNow();
+    const act = state.accounts.filter((a) => a.active);
+    title = 'Konten gesamt';
+    html = list(act.map((a) => row(a.name, KINDS[a.kind], bals.get(a.id).value)), 'Noch keine Konten.') + total('Zusammen', budgetNow().cash);
+  } else if (id === 'schulden') {
+    const open = state.debts.filter((d) => !d.paid).sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
+    title = 'Schulden';
+    html = list(open.map((d) => row(d.name, [DEBT_KINDS[d.kind], d.due_date ? `fällig am ${fullDate(d.due_date)}` : 'ohne Fälligkeit', d.note].filter(Boolean).join(' · '), -Number(d.amount))), 'Nichts offen.')
+      + total('Offen gesamt', -budgetNow().debt);
+  } else if (id === 'fix') {
+    title = `Fixkosten ${month}`;
+    html = list(fixed.map((x) => item(x, -1)), 'Keine festen Ausgaben in diesem Monat.') + total('Zusammen', -fig.fixExp);
+  } else {
+    title = `Übrig nach Fixkosten ${month}`;
+    const income = [...fig.fixedInc, ...fig.extraList].sort(bySize);
+    html = `<h4 class="sheet-h">Einnahmen</h4>${list(income.map((x) => item(x, 1)), 'Keine Einnahmen in diesem Monat.')}${total('Einnahmen gesamt', fig.income)}
+      <h4 class="sheet-h">Fixkosten</h4>${list(fixed.map((x) => item(x, -1)), 'Keine festen Ausgaben in diesem Monat.')}${total('Fixkosten gesamt', -fig.fixExp)}
+      <p class="sumline"><span><b>Übrig</b></span><b>${money(fig.saldo)}</b></p>`;
+  }
+  openInfo(title, html);
 }
 
 function debtsCard() {
@@ -1896,6 +1936,13 @@ function closeSheet() {
     $sheet.close();
     $sheet.classList.remove('closing');
   }, 250);
+}
+
+// Blatt nur zum Ansehen, ohne Eingabefelder.
+function openInfo(title, html) {
+  $sheet.innerHTML = `<div class="grab"></div><h3>${esc(title)}</h3>${html}<div class="btnrow"><button type="button" class="btn grow" data-s="cancel">Schließen</button></div>`;
+  $sheet.querySelector('[data-s="cancel"]').onclick = () => closeSheet();
+  $sheet.showModal();
 }
 
 function openSheet({ title, text, html = '', fields = [], saveLabel = 'Speichern', deleteLabel = 'Löschen', onSave, onDelete }) {
@@ -2833,6 +2880,7 @@ const actions = {
     render();
     window.scrollTo(0, 0);
   },
+  fintile: (el) => finTile(el.dataset.v),
   accopen: (el) => {
     state.accDetail = el.dataset.id;
     state.accSeg = 'alle';
